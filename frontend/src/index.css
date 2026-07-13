@@ -1,0 +1,134 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Unbounded:wght@400;600;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 230 47% 6%;
+    --foreground: 0 0% 100%;
+    --card: 230 47% 9%;
+    --card-foreground: 0 0% 100%;
+    --popover: 230 47% 7%;
+    --popover-foreground: 0 0% 100%;
+    --primary: 188 100% 50%;
+    --primary-foreground: 230 47% 6%;
+    --secondary: 230 30% 14%;
+    --secondary-foreground: 0 0% 100%;
+    --muted: 230 30% 14%;
+    --muted-foreground: 215 16% 65%;
+    --accent: 271 100% 65%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 348 100% 62%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 188 100% 50% / 0.18;
+    --input: 230 30% 14%;
+    --ring: 188 100% 50%;
+    --radius: 0.75rem;
+  }
+}
+
+@layer base {
+  * { @apply border-border; }
+  html, body, #root { @apply bg-void text-white; min-height: 100vh; }
+  body { font-family: 'Inter', system-ui, sans-serif; }
+  h1,h2,h3 { font-family: 'Unbounded', sans-serif; letter-spacing: -0.02em; }
+  .font-mono { font-family: 'JetBrains Mono', monospace; }
+}
+
+/* HUD Background */
+.hud-bg {
+  background-color: #05060B;
+  background-image:
+    radial-gradient(ellipse at 20% 10%, rgba(0, 229, 255, 0.10), transparent 55%),
+    radial-gradient(ellipse at 85% 90%, rgba(177, 76, 255, 0.10), transparent 55%),
+    linear-gradient(rgba(0,229,255,0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,229,255,0.04) 1px, transparent 1px);
+  background-size: auto, auto, 48px 48px, 48px 48px;
+}
+
+.hex-bg {
+  background-image:
+    radial-gradient(circle at 50% 50%, rgba(0,229,255,0.05) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+.glass {
+  background: rgba(14, 18, 36, 0.55);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid rgba(0, 229, 255, 0.18);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255,255,255,0.04);
+}
+
+.glass-violet { border-color: rgba(177, 76, 255, 0.22); }
+
+.neon-cyan { box-shadow: 0 0 0 1px rgba(0,229,255,0.5), 0 0 20px rgba(0,229,255,0.35); }
+.neon-violet { box-shadow: 0 0 0 1px rgba(177,76,255,0.5), 0 0 20px rgba(177,76,255,0.35); }
+.neon-red { box-shadow: 0 0 0 1px rgba(255,61,113,0.6), 0 0 22px rgba(255,61,113,0.4); }
+.neon-amber { box-shadow: 0 0 0 1px rgba(255,176,32,0.5), 0 0 20px rgba(255,176,32,0.35); }
+
+.btn-cyan {
+  background: linear-gradient(135deg, #00E5FF 0%, #7DF7FF 100%);
+  color: #05060B;
+  font-weight: 600;
+  transition: all 0.25s ease;
+}
+.btn-cyan:hover { box-shadow: 0 0 24px rgba(0,229,255,0.6); transform: translateY(-1px); }
+
+.btn-ghost-cyan {
+  background: transparent;
+  border: 1px solid #00E5FF;
+  color: #00E5FF;
+  transition: all 0.25s ease;
+}
+.btn-ghost-cyan:hover { background: rgba(0,229,255,0.08); }
+
+.btn-ghost-violet {
+  background: transparent;
+  border: 1px solid #B14CFF;
+  color: #B14CFF;
+  transition: all 0.25s ease;
+}
+.btn-ghost-violet:hover { background: rgba(177,76,255,0.08); }
+
+.label-mono {
+  font-family: 'JetBrains Mono', monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 0.7rem;
+  color: rgba(160,174,192,0.85);
+}
+
+.input-hud {
+  background: rgba(14, 18, 36, 0.7);
+  border: 1px solid rgba(0,229,255,0.25);
+  color: white;
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+  font-family: 'JetBrains Mono', monospace;
+  outline: none;
+  transition: all 0.2s ease;
+  width: 100%;
+}
+.input-hud:focus { border-color: #00E5FF; box-shadow: 0 0 0 3px rgba(0,229,255,0.15); }
+.input-hud::placeholder { color: rgba(160,174,192,0.4); }
+
+::selection { background: rgba(0,229,255,0.4); color: #fff; }
+
+/* status dot */
+.dot-pulse::before {
+  content: '';
+  display: inline-block;
+  width: 8px; height: 8px; border-radius: 999px;
+  background: currentColor;
+  margin-right: 8px;
+  box-shadow: 0 0 8px currentColor;
+  animation: dotPulse 1.6s ease-in-out infinite;
+}
+@keyframes dotPulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+@layer base {
+  [data-debug-wrapper="true"] { display: contents !important; }
+}
