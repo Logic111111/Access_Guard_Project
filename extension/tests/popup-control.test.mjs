@@ -158,3 +158,101 @@ test("configuring a new deployment is refused while a candidate is armed", async
   assert.equal(rejected.ok, false);
   assert.equal(rejected.error.code, "cannot_reconfigure_while_armed");
 });
+
+test("invigilator can sign in, start a quick session, poll status, and end it", async () => {
+  const { chrome, listeners, storage } = createChromeMock();
+  globalThis.chrome = chrome;
+  const fetchCalls = [];
+  let candidateCount = 0;
+  globalThis.fetch = async (url, options = {}) => {
+    fetchCalls.push({ url: String(url), options });
+    const href = String(url);
+    if (href.endsWith("/auth/login")) {
+      return { ok: true, status: 200, json: async () => ({ token: "inv-token-123", inv_id: "EG/STAFF/0001", name: "Ada Lovelace" }) };
+    }
+    if (href.endsWith("/sessions")) {
+      return { ok: true, status: 200, json: async () => ({ id: "session-1", session_code: "QUIK-ABCD-EFGH", exam_name: "Quick Lockdown" }) };
+    }
+    if (href.endsWith("/sessions/session-1/start")) {
+      return { ok: true, status: 200, json: async () => ({ ok: true, started_at: new Date().toISOString() }) };
+    }
+    if (href.endsWith("/sessions/session-1/candidates")) {
+      return { ok: true, status: 200, json: async () => Array.from({ length: candidateCount }, (_, i) => ({ id: `cand-${i}` })) };
+    }
+    if (href.endsWith("/sessions/session-1/end")) {
+      return { ok: true, status: 200, json: async () => ({ ok: true, ended_at: new Date().toISOString() }) };
+    }
+    throw new Error(`Unexpected fetch: ${href}`);
+  };
+
+  await importFreshServiceWorker();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const send = makeSend(listeners);
+
+  await send({ scope: "accessguard-popup", action: "CONFIGURE_DEPLOYMENT", appUrl: "https://exam.example.edu" });
+
+  const login = await send({
+    scope: "accessguard-popup",
+    action: "INVIGILATOR_LOGIN",
+    invId: "EG/STAFF/0001",
+    password: "AccessGuard2026!",
+  });
+  assert.equal(login.ok, true);
+  assert.equal(login.data.name, "Ada Lovelace");
+  assert.equal(storage.accessguardInvigilatorAuth.token, "inv-token-123");
+
+  const created = await send({
+    scope: "accessguard-popup",
+    action: "CREATE_QUICK_SESSION",
+    durationMinutes: 45,
+    questionText: "Summarize the reading.",
+    modelAnswer: "Any reasonable summary.",
+    whitelistedUrls: [],
+  });
+  assert.equal(created.ok, true);
+  assert.equal(created.data.sessionCode, "QUIK-ABCD-EFGH");
+  assert.ok(fetchCalls.some((c) => c.url.endsWith("/sessions/session-1/start")));
+  const createCall = fetchCalls.find((c) => c.url.endsWith("/sessions") && c.options.method === "POST");
+  assert.equal(createCall.options.headers.Authorization, "Bearer inv-token-123");
+
+  candidateCount = 3;
+  const status = await send({ scope: "accessguard-popup", action: "GET_CONTROL_STATUS" });
+  assert.equal(status.ok, true);
+  assert.equal(status.data.invigilator.signedIn, true);
+  assert.equal(status.data.quickSession.active, true);
+  assert.equal(status.data.quickSession.candidateCount, 3);
+
+  const ended = await send({ scope: "accessguard-popup", action: "END_QUICK_SESSION" });
+  assert.equal(ended.ok, true);
+  const statusAfterEnd = await send({ scope: "accessguard-popup", action: "GET_CONTROL_STATUS" });
+  assert.equal(statusAfterEnd.data.quickSession.active, false);
+});
+
+test("an expired invigilator token is cleared instead of shown as signed in forever", async () => {
+  const { chrome, listeners, storage } = createChromeMock();
+  globalThis.chrome = chrome;
+  globalThis.fetch = async (url) => {
+    const href = String(url);
+    if (href.endsWith("/auth/login")) {
+      return { ok: true, status: 200, json: async () => ({ token: "stale-token", inv_id: "EG/STAFF/0001", name: "Ada Lovelace" }) };
+    }
+    if (href.endsWith("/sessions/session-1/candidates")) {
+      return { ok: false, status: 401, json: async () => ({ detail: "Invalid token" }) };
+    }
+    throw new Error(`Unexpected fetch: ${href}`);
+  };
+
+  await importFreshServiceWorker();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const send = makeSend(listeners);
+
+  await send({ scope: "accessguard-popup", action: "CONFIGURE_DEPLOYMENT", appUrl: "https://exam.example.edu" });
+  await send({ scope: "accessguard-popup", action: "INVIGILATOR_LOGIN", invId: "EG/STAFF/0001", password: "x" });
+  storage.accessguardActiveQuickSession = { sessionId: "session-1", sessionCode: "QUIK-ABCD-EFGH" };
+
+  const status = await send({ scope: "accessguard-popup", action: "GET_CONTROL_STATUS" });
+  assert.equal(status.ok, true);
+  assert.equal(status.data.invigilator.signedIn, false);
+  assert.equal(status.data.quickSession.active, false);
+  assert.equal(storage.accessguardInvigilatorAuth, null);
+});

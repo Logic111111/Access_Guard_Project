@@ -16,3 +16,8 @@ export const MAX_ALLOWED_ORIGINS = 500;
 export const POLICY_PATH = "/public/extension/policy";
 export const HEARTBEAT_PATH = "/public/extension/heartbeat";
 export const ACCESS_REQUEST_PATH = "/public/extension/access-requests";
+
+export const INVIGILATOR_AUTH_STORAGE_KEY = "accessguardInvigilatorAuth";
+export const ACTIVE_QUICK_SESSION_STORAGE_KEY = "accessguardActiveQuickSession";
+export const AUTH_LOGIN_PATH = "/auth/login";
+export const SESSIONS_PATH = "/sessions";
