@@ -2,7 +2,8 @@ import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import AppShell from "../components/AppShell";
 import { api } from "../lib/api";
-import { Plus, FolderOpen, Clock, Calendar, History, Sparkles } from "lucide-react";
+import { Plus, FolderOpen, Clock, Calendar, History, Sparkles, Zap } from "lucide-react";
+import { toast } from "sonner";
 
 export default function Sessions() {
   const nav = useNavigate();
@@ -22,6 +23,10 @@ export default function Sessions() {
         <div className="flex justify-between items-center mb-6">
           <p className="text-white/60 text-sm">Manage exam sessions and live monitoring.</p>
           <div className="flex gap-2">
+            <button data-testid="quick-lockdown-btn" onClick={() => nav("/sessions/quick")}
+              className="btn-cyan rounded-full px-5 py-2.5 flex items-center gap-2">
+              <Zap size={16} /> Quick Lockdown
+            </button>
             <button data-testid="quick-quiz-btn" onClick={() => nav("/sessions/new?mode=quiz")}
               className="btn-ghost-cyan rounded-full px-5 py-2.5 flex items-center gap-2">
               <Sparkles size={16} /> Distribute Quiz
@@ -53,6 +58,10 @@ export default function Sessions() {
             Start a new exam session to begin monitoring students in real-time.
           </p>
           <div className="flex gap-3 mt-6">
+            <button data-testid="empty-quick-btn" onClick={() => nav("/sessions/quick")}
+              className="btn-cyan rounded-full px-6 py-3 flex items-center gap-2">
+              <Zap size={16} /> Quick Lockdown
+            </button>
             <button data-testid="empty-create-btn" onClick={() => nav("/sessions/new")}
               className="btn-cyan rounded-full px-6 py-3 flex items-center gap-2">
               <Plus size={16} /> Create New Session
@@ -71,12 +80,36 @@ export default function Sessions() {
           {rows.map((s, idx) => {
             const Icon = icons[idx % icons.length];
             const statusColor = s.status === "live" ? "text-online" : s.status === "ended" ? "text-white/40" : "text-cyan";
+
+            const deleteSession = async (e) => {
+              e.stopPropagation();
+              if (!window.confirm(`Are you sure you want to delete session '${s.exam_name}'? This cannot be undone.`)) return;
+              try {
+                await api.delete(`/sessions/${s.id}`);
+                toast.success("Session deleted successfully");
+                setRows((r) => r.filter((row) => row.id !== s.id));
+              } catch (err) {
+                toast.error(err?.response?.data?.detail || "Failed to delete session");
+              }
+            };
+
             return (
-              <button key={s.id} onClick={() => nav(`/sessions/${s.id}/dashboard`)}
+              <div key={s.id} onClick={() => nav(`/sessions/${s.id}/dashboard`)}
                 data-testid={`session-card-${s.id}`}
-                className="glass rounded-xl p-5 text-left hover:neon-cyan transition-all">
-                <div className="flex items-center gap-2 label-mono">
-                  <Icon size={12} /> {s.exam_code}
+                className="glass rounded-xl p-5 text-left hover:neon-cyan transition-all cursor-pointer relative group">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 label-mono">
+                    <Icon size={12} /> {s.exam_code}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={deleteSession}
+                    title="Delete Session"
+                    className="text-white/40 hover:text-violation transition-colors p-1 rounded hover:bg-violation/10"
+                    data-testid={`delete-session-${s.id}`}
+                  >
+                    🗑
+                  </button>
                 </div>
                 <div className="font-display text-lg mt-2">{s.exam_name}</div>
                 <div className="font-mono text-xs text-white/60 mt-1">CODE {s.session_code}</div>
@@ -84,7 +117,7 @@ export default function Sessions() {
                   <span className={`label-mono ${statusColor}`}>● {s.status.toUpperCase()}</span>
                   <span className="text-xs text-white/40">{s.duration_minutes} min</span>
                 </div>
-              </button>
+              </div>
             );
           })}
         </div>
