@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>AccessGuard Lockdown</title>
+    <link rel="stylesheet" href="ui.css">
+  </head>
+  <body class="popup-page">
+    <main class="panel">
+      <p class="eyebrow">Extension control</p>
+      <h1>AccessGuard Lockdown</h1>
+
+      <section id="setup-view" hidden>
+        <p class="notice">Connect this extension to your AccessGuard deployment once. Ask your admin if you are not sure of the URL.</p>
+        <label class="label" for="setup-app-url">AccessGuard App URL</label>
+        <input id="setup-app-url" type="text" placeholder="https://exam.example.edu">
+        <div class="actions">
+          <button id="setup-connect-btn" type="button">Connect</button>
+        </div>
+        <p id="setup-notice" class="notice" role="status" aria-live="polite"></p>
+      </section>
+
+      <section id="role-view" hidden>
+        <div class="tabs">
+          <button id="role-tab-invigilator" class="tab" type="button">Invigilator</button>
+          <button id="role-tab-student" class="tab" type="button">Join as student</button>
+        </div>
+
+        <div id="invigilator-panel" hidden>
+          <div id="invigilator-session-bar" class="session-bar" hidden>
+            <span id="invigilator-name" class="mono"></span>
+            <button id="inv-signout-btn" class="secondary" type="button">Sign out</button>
+          </div>
+
+          <div id="invigilator-login-view">
+            <label class="label" for="inv-id-input">Invigilator ID</label>
+            <input id="inv-id-input" type="text" placeholder="EG/STAFF/####">
+            <label class="label" for="inv-password-input">Password</label>
+            <input id="inv-password-input" type="password">
+            <div class="actions">
+              <button id="inv-login-btn" type="button">Sign in</button>
+            </div>
+          </div>
+
+          <div id="quick-create-view" hidden>
+            <label class="label" for="quick-exam-name">Exam Name (optional)</label>
+            <input id="quick-exam-name" type="text">
+            <label class="label" for="quick-duration">Duration (minutes)</label>
+            <input id="quick-duration" type="number" min="5" max="480" value="60">
+            <label class="label" for="quick-question">Question</label>
+            <textarea id="quick-question" rows="3"></textarea>
+            <label class="label" for="quick-model-answer">Model Answer</label>
+            <textarea id="quick-model-answer" rows="2"></textarea>
+            <label class="label" for="quick-urls">Allowed URLs (one per line, optional)</label>
+            <textarea id="quick-urls" rows="2"></textarea>
+            <div class="actions">
+              <button id="quick-start-btn" type="button">Start Quick Session</button>
+            </div>
+          </div>
+
+          <div id="quick-active-view" hidden>
+            <div class="status-pill" id="quick-active-pill">QUICK SESSION LIVE</div>
+            <dl class="diagnostics">
+              <dt>Join code</dt><dd id="quick-active-code">—</dd>
+              <dt>Candidates joined</dt><dd id="quick-active-count">0</dd>
+            </dl>
+            <div class="actions">
+              <button id="quick-dashboard-btn" type="button">Open dashboard</button>
+              <button id="quick-end-btn" class="secondary" type="button">End session</button>
+            </div>
+          </div>
+
+          <p id="invigilator-notice" class="notice" role="status" aria-live="polite"></p>
+        </div>
+
+        <div id="student-panel" hidden>
+          <div id="student-join-view">
+            <label class="label" for="join-code-input">Session Code</label>
+            <input id="join-code-input" type="text" placeholder="XXXX-XXXX-XXXX">
+            <label class="label" for="join-student-id-input">Student ID</label>
+            <input id="join-student-id-input" type="text">
+            <label class="label" for="join-name-input">Full Name</label>
+            <input id="join-name-input" type="text">
+            <div class="actions">
+              <button id="join-btn" type="button">Join</button>
+            </div>
+          </div>
+
+          <div id="student-armed-view" hidden>
+            <div id="popup-status" class="status-pill">Loading status</div>
+            <dl class="diagnostics">
+              <dt>Backend state</dt><dd id="backend-state">—</dd>
+              <dt>Policy version</dt><dd id="policy-version">—</dd>
+              <dt>Session</dt><dd id="session-id">—</dd>
+              <dt>Allowed origins</dt><dd id="allowed-count">0</dd>
+              <dt>Policy checked</dt><dd id="policy-checked">—</dd>
+              <dt>Heartbeat</dt><dd id="heartbeat-at">—</dd>
+              <dt>Managed trust</dt><dd id="managed-trust">No</dd>
+            </dl>
+            <button id="refresh-policy" type="button">Refresh authenticated policy</button>
+          </div>
+
+          <p id="student-notice" class="notice" role="status" aria-live="polite"></p>
+        </div>
+      </section>
+
+      <p class="fine-print">
+        This popup cannot disable lockdown once joined. Rules are removed only after the backend returns an authenticated release state.
+      </p>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>
