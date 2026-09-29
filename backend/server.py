@@ -728,9 +728,9 @@ class StudentJoinIn(BaseModel):
     session_code: str
     student_id: str
     full_name: str
-    id_front_b64: str
-    id_back_b64: str
-    selfie_b64: str
+    id_front_b64: str = ""
+    id_back_b64: str = ""
+    selfie_b64: str = ""
     liveness_passed: bool = True
     face_match_score: float = 0.0
 
@@ -1136,7 +1136,8 @@ async def candidate_join(body: StudentJoinIn):
         else:
             urls[f"{field}_url"] = b64 if b64.startswith("data:") else f"data:image/jpeg;base64,{b64}"
     candidate_token = make_candidate_token(cid, s["id"])
-    initial_status = "pending"
+    initial_status = "pending" if s.get("require_manual_approval", True) else "approved"
+    approved_at = now_iso() if initial_status == "approved" else None
     doc = {
         "id": cid,
         "session_id": s["id"],
@@ -1148,7 +1149,7 @@ async def candidate_join(body: StudentJoinIn):
         "face_match_score": body.face_match_score,
         "status": initial_status,
         "joined_at": now_iso(),
-        "approved_at": None,
+        "approved_at": approved_at,
         "submitted_at": None,
     }
     await db.candidates.insert_one(doc)

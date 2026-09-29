@@ -452,3 +452,92 @@ def test_lockdown_bypass_locks_candidate_like_prohibited_url(monkeypatch):
     assert result["locked"] is True
     assert lock_updates[0][1]["$set"]["status"] == "locked"
     assert stored[0]["kind"] == "lockdown_bypass"
+
+
+def test_candidate_join_without_verification_media_when_not_required(monkeypatch):
+    session = _session(session_code="QUIK-ABCD-EFGH", require_identity_verification=False, status="scheduled")
+
+    class FakeSessions:
+        async def find_one(self, query, projection=None):
+            return session
+
+    class FakeCandidates:
+        def __init__(self):
+            self.inserted = None
+
+        async def count_documents(self, query):
+            return 0
+
+        async def find_one(self, query, projection=None):
+            return None
+
+        async def insert_one(self, document):
+            self.inserted = document.copy()
+
+    fake_candidates = FakeCandidates()
+
+    class FakeDatabase:
+        sessions = FakeSessions()
+        candidates = fake_candidates
+
+    async def ignore_broadcast(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(server, "db", FakeDatabase())
+    monkeypatch.setattr(server, "ws_broadcast", ignore_broadcast)
+    monkeypatch.setattr(server, "make_candidate_token", lambda candidate_id, session_id: "test-candidate-token")
+
+    result = asyncio.run(candidate_join(StudentJoinIn(
+        session_code=session["session_code"],
+        student_id="STUDENT-9",
+        full_name="Quick Student",
+    )))
+
+    assert result["status"] == "pending"
+    assert fake_candidates.inserted["id_front_url"] is None
+    assert fake_candidates.inserted["id_back_url"] is None
+    assert fake_candidates.inserted["selfie_url"] is None
+
+
+def test_candidate_join_auto_approves_when_manual_approval_disabled(monkeypatch):
+    session = _session(session_code="QUIK-ABCD-EFGH", require_manual_approval=False, status="live")
+
+    class FakeSessions:
+        async def find_one(self, query, projection=None):
+            return session
+
+    class FakeCandidates:
+        def __init__(self):
+            self.inserted = None
+
+        async def count_documents(self, query):
+            return 0
+
+        async def find_one(self, query, projection=None):
+            return None
+
+        async def insert_one(self, document):
+            self.inserted = document.copy()
+
+    fake_candidates = FakeCandidates()
+
+    class FakeDatabase:
+        sessions = FakeSessions()
+        candidates = fake_candidates
+
+    async def ignore_broadcast(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(server, "db", FakeDatabase())
+    monkeypatch.setattr(server, "ws_broadcast", ignore_broadcast)
+    monkeypatch.setattr(server, "make_candidate_token", lambda candidate_id, session_id: "test-candidate-token")
+
+    result = asyncio.run(candidate_join(StudentJoinIn(
+        session_code=session["session_code"],
+        student_id="STUDENT-10",
+        full_name="Auto Approved",
+    )))
+
+    assert result["status"] == "approved"
+    assert fake_candidates.inserted["status"] == "approved"
+    assert fake_candidates.inserted["approved_at"] is not None
