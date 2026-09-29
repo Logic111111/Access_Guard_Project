@@ -17,6 +17,7 @@ import {
   ACCESS_REQUEST_PATH,
   BUILD_TRUSTED_API_ORIGINS,
   BUILD_TRUSTED_APP_ORIGINS,
+  DEPLOYMENT_STORAGE_KEY,
   FETCH_TIMEOUT_MS,
   HEARTBEAT_PATH,
   MAX_ALLOWED_ORIGINS,
@@ -260,6 +261,43 @@ async function loadTrustConfiguration() {
       (managed.trusted_api_origins || []).length
     ),
   };
+}
+
+async function readDeployment() {
+  const stored = await chrome.storage.local.get(DEPLOYMENT_STORAGE_KEY);
+  const value = stored?.[DEPLOYMENT_STORAGE_KEY];
+  if (!value || typeof value !== "object" || !value.appOrigin || !value.apiBase) return null;
+  return { appOrigin: value.appOrigin, apiBase: value.apiBase, managed: Boolean(value.managed) };
+}
+
+async function writeDeployment(deployment) {
+  await chrome.storage.local.set({ [DEPLOYMENT_STORAGE_KEY]: deployment });
+  return deployment;
+}
+
+async function getOrDetectDeployment() {
+  const existing = await readDeployment();
+  if (existing) return existing;
+
+  const trust = await loadTrustConfiguration();
+  if (trust.appOrigins.length && trust.apiOrigins.length) {
+    return writeDeployment({ appOrigin: trust.appOrigins[0], apiBase: trust.apiOrigins[0], managed: true });
+  }
+  return null;
+}
+
+async function configureDeployment(appUrl) {
+  const runtime = await readRuntime();
+  assert(
+    !runtime.candidateToken,
+    "cannot_reconfigure_while_armed",
+    "Sign out or release the active lockdown before changing servers"
+  );
+
+  const appOrigin = normalizeOrigin(appUrl);
+  const apiBase = normalizeApiBase(undefined, appOrigin);
+  const trust = await validateBootstrapTrust(appOrigin, apiBase);
+  return writeDeployment({ appOrigin, apiBase, managed: trust.managed });
 }
 
 async function validateBootstrapTrust(appOrigin, apiBase) {
@@ -955,6 +993,8 @@ async function handlePopupMessage(message, sender) {
     assert(runtime.candidateToken, "not_armed", "No authenticated candidate policy is active");
     return publicStatus(await refreshPolicy());
   }
+  if (message?.action === "GET_DEPLOYMENT") return getOrDetectDeployment();
+  if (message?.action === "CONFIGURE_DEPLOYMENT") return configureDeployment(message.appUrl);
   throw new LockdownError("unsupported_action", "Unsupported popup action");
 }
 
