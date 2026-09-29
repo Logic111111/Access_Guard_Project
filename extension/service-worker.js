@@ -13,19 +13,24 @@ import {
   normalizePolicy,
   sanitizeAttemptedUrl,
 } from "./rule-helpers.js";
+import { buildQuickSessionPayload, validateLoginForm } from "./quick-session.js";
 import {
   ACCESS_REQUEST_PATH,
+  ACTIVE_QUICK_SESSION_STORAGE_KEY,
+  AUTH_LOGIN_PATH,
   BUILD_TRUSTED_API_ORIGINS,
   BUILD_TRUSTED_APP_ORIGINS,
   DEPLOYMENT_STORAGE_KEY,
   FETCH_TIMEOUT_MS,
   HEARTBEAT_PATH,
+  INVIGILATOR_AUTH_STORAGE_KEY,
   MAX_ALLOWED_ORIGINS,
   POLICY_ALARM,
   POLICY_PATH,
   POLICY_REFRESH_MINUTES,
   PROTOCOL_VERSION,
   RUNTIME_STORAGE_KEY,
+  SESSIONS_PATH,
 } from "./config.js";
 
 const BRIDGE_SCOPE = "accessguard-content-bridge";
@@ -300,6 +305,148 @@ async function configureDeployment(appUrl) {
   const apiBase = normalizeApiBase(undefined, appOrigin);
   const trust = await validateBootstrapTrust(appOrigin, apiBase);
   return writeDeployment({ appOrigin, apiBase, managed: trust.managed });
+}
+
+function invigilatorHeaders(token, hasBody = false) {
+  return {
+    Accept: "application/json",
+    ...(hasBody ? { "Content-Type": "application/json" } : {}),
+    Authorization: `Bearer ${token}`,
+    "Cache-Control": "no-store",
+  };
+}
+
+async function readInvigilatorAuth() {
+  const stored = await chrome.storage.local.get(INVIGILATOR_AUTH_STORAGE_KEY);
+  const value = stored?.[INVIGILATOR_AUTH_STORAGE_KEY];
+  if (!value || typeof value !== "object" || !value.token) return null;
+  return value;
+}
+
+async function writeInvigilatorAuth(auth) {
+  await chrome.storage.local.set({ [INVIGILATOR_AUTH_STORAGE_KEY]: auth });
+  return auth;
+}
+
+async function clearInvigilatorAuth() {
+  await chrome.storage.local.set({ [INVIGILATOR_AUTH_STORAGE_KEY]: null });
+}
+
+async function readActiveQuickSession() {
+  const stored = await chrome.storage.local.get(ACTIVE_QUICK_SESSION_STORAGE_KEY);
+  const value = stored?.[ACTIVE_QUICK_SESSION_STORAGE_KEY];
+  if (!value || typeof value !== "object" || !value.sessionId) return null;
+  return value;
+}
+
+async function writeActiveQuickSession(session) {
+  await chrome.storage.local.set({ [ACTIVE_QUICK_SESSION_STORAGE_KEY]: session });
+  return session;
+}
+
+async function clearActiveQuickSession() {
+  await chrome.storage.local.set({ [ACTIVE_QUICK_SESSION_STORAGE_KEY]: null });
+}
+
+async function invigilatorLogin({ invId, password }) {
+  const { invId: normalizedInvId, password: normalizedPassword } = validateLoginForm({ invId, password });
+  const deployment = await getOrDetectDeployment();
+  assert(deployment, "deployment_not_configured", "Connect this extension to an AccessGuard server first");
+
+  const response = await fetchWithTimeout(endpointUrl(deployment.apiBase, AUTH_LOGIN_PATH), {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify({ inv_id: normalizedInvId, password: normalizedPassword, login_method: "password" }),
+  });
+  const data = await readJsonResponse(response, "invigilator_login_failed");
+  await writeInvigilatorAuth({ token: data.token, invId: data.inv_id, name: data.name });
+  return { invId: data.inv_id, name: data.name };
+}
+
+async function invigilatorLogout() {
+  await clearInvigilatorAuth();
+  await clearActiveQuickSession();
+  return { signedOut: true };
+}
+
+async function requireInvigilatorContext() {
+  const deployment = await getOrDetectDeployment();
+  assert(deployment, "deployment_not_configured", "Connect this extension to an AccessGuard server first");
+  const auth = await readInvigilatorAuth();
+  assert(auth?.token, "invigilator_not_signed_in", "Sign in as an invigilator first");
+  return { deployment, auth };
+}
+
+async function createQuickSession(form) {
+  const { deployment, auth } = await requireInvigilatorContext();
+  const payload = buildQuickSessionPayload(form);
+
+  const createResponse = await fetchWithTimeout(endpointUrl(deployment.apiBase, SESSIONS_PATH), {
+    method: "POST",
+    headers: invigilatorHeaders(auth.token, true),
+    body: JSON.stringify(payload),
+  });
+  const session = await readJsonResponse(createResponse, "quick_session_create_failed");
+
+  const startResponse = await fetchWithTimeout(endpointUrl(deployment.apiBase, `${SESSIONS_PATH}/${session.id}/start`), {
+    method: "POST",
+    headers: invigilatorHeaders(auth.token, false),
+  });
+  await readJsonResponse(startResponse, "quick_session_start_failed");
+
+  await writeActiveQuickSession({ sessionId: session.id, sessionCode: session.session_code });
+  return { sessionId: session.id, sessionCode: session.session_code };
+}
+
+async function endQuickSession() {
+  const { deployment, auth } = await requireInvigilatorContext();
+  const active = await readActiveQuickSession();
+  assert(active?.sessionId, "no_active_quick_session", "No quick session is currently running");
+
+  const response = await fetchWithTimeout(endpointUrl(deployment.apiBase, `${SESSIONS_PATH}/${active.sessionId}/end`), {
+    method: "POST",
+    headers: invigilatorHeaders(auth.token, false),
+  });
+  await readJsonResponse(response, "quick_session_end_failed");
+  await clearActiveQuickSession();
+  return { ended: true };
+}
+
+async function fetchQuickSessionCandidateCount(apiBase, token, sessionId) {
+  const response = await fetchWithTimeout(endpointUrl(apiBase, `${SESSIONS_PATH}/${sessionId}/candidates`), {
+    method: "GET",
+    headers: invigilatorHeaders(token, false),
+  });
+  const rows = await readJsonResponse(response, "quick_session_status_failed");
+  return Array.isArray(rows) ? rows.length : 0;
+}
+
+async function getControlStatus() {
+  const deployment = await getOrDetectDeployment();
+  const invigilatorAuth = await readInvigilatorAuth();
+  const active = await readActiveQuickSession();
+
+  let quickSession = { active: false, sessionId: null, sessionCode: null, candidateCount: 0 };
+  if (active?.sessionId && deployment && invigilatorAuth?.token) {
+    try {
+      const candidateCount = await fetchQuickSessionCandidateCount(deployment.apiBase, invigilatorAuth.token, active.sessionId);
+      quickSession = { active: true, sessionId: active.sessionId, sessionCode: active.sessionCode, candidateCount };
+    } catch (error) {
+      if (error?.code === "candidate_auth_failed") {
+        await clearInvigilatorAuth();
+        await clearActiveQuickSession();
+        return getControlStatus();
+      }
+      quickSession = { active: true, sessionId: active.sessionId, sessionCode: active.sessionCode, candidateCount: 0 };
+    }
+  }
+
+  const auth = await readInvigilatorAuth();
+  return {
+    deployment,
+    invigilator: { signedIn: Boolean(auth?.token), invId: auth?.invId || null, name: auth?.name || null },
+    quickSession,
+  };
 }
 
 async function validateBootstrapTrust(appOrigin, apiBase) {
@@ -997,6 +1144,11 @@ async function handlePopupMessage(message, sender) {
   }
   if (message?.action === "GET_DEPLOYMENT") return getOrDetectDeployment();
   if (message?.action === "CONFIGURE_DEPLOYMENT") return configureDeployment(message.appUrl);
+  if (message?.action === "GET_CONTROL_STATUS") return getControlStatus();
+  if (message?.action === "INVIGILATOR_LOGIN") return invigilatorLogin(message);
+  if (message?.action === "INVIGILATOR_LOGOUT") return invigilatorLogout();
+  if (message?.action === "CREATE_QUICK_SESSION") return createQuickSession(message);
+  if (message?.action === "END_QUICK_SESSION") return endQuickSession();
   throw new LockdownError("unsupported_action", "Unsupported popup action");
 }
 
