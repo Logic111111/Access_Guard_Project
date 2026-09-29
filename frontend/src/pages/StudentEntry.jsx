@@ -1,10 +1,18 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { Logo } from "../components/Logo";
-import { api } from "../lib/api";
+import { api, candidateAuthConfig } from "../lib/api";
 import { ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 import { buildQuizPromptUrl } from "../lib/moduleQuiz";
+import {
+  clearStudentAttempt,
+  getStoredStudentAttempt,
+  saveCandidateAttempt,
+  saveStudentJoinContext,
+} from "../lib/studentSession";
+
+const TERMINAL_ATTEMPT_STATES = new Set(["kicked", "rejected", "exited"]);
 
 export default function StudentEntry() {
   const nav = useNavigate();
@@ -13,6 +21,11 @@ export default function StudentEntry() {
   const [studentId, setStudentId] = useState("");
   const [name, setName] = useState("");
   const [loading, setLoading] = useState(false);
+  const [resuming, setResuming] = useState(false);
+  const [recovery, setRecovery] = useState(() => {
+    const attempt = getStoredStudentAttempt();
+    return attempt.candidateId && attempt.candidateToken ? attempt : null;
+  });
   const autoAdvanceRef = useRef(false);
 
   useEffect(() => {
@@ -28,9 +41,15 @@ export default function StudentEntry() {
       setName(queryName);
       if (!autoAdvanceRef.current && queryCode && queryStudentId && queryName) {
         autoAdvanceRef.current = true;
-        void next({ preventDefault() {} });
+        void continueWithDetails({
+          sessionCode: queryCode,
+          enteredStudentId: queryStudentId,
+          enteredName: queryName,
+        });
       }
     }
+    // Query parameters are an explicit one-time join instruction.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.search]);
 
   useEffect(() => {
@@ -42,18 +61,103 @@ export default function StudentEntry() {
     }
   }, [location.search, code, studentId, name]);
 
+  const resumeExistingAttempt = async () => {
+    if (!recovery?.candidateId || !recovery?.candidateToken) return "cleared";
+    setResuming(true);
+    try {
+      const { data: candidate } = await api.get(
+        `/public/candidates/${recovery.candidateId}`,
+        candidateAuthConfig()
+      );
+      const status = String(candidate?.status || "").toLowerCase();
+      const currentSession = recovery.session || {};
+      const currentStudent = recovery.student || {};
+      saveStudentJoinContext(
+        {
+          ...currentSession,
+          session_code: candidate?.session_code || currentSession.session_code,
+        },
+        {
+          ...currentStudent,
+          student_id: candidate?.student_id || currentStudent.student_id,
+          full_name: candidate?.full_name || currentStudent.full_name,
+        }
+      );
+
+      if (status === "finished") {
+        nav("/student/receipt");
+        return "resumed";
+      }
+      if (TERMINAL_ATTEMPT_STATES.has(status)) {
+        clearStudentAttempt();
+        setRecovery(null);
+        toast.info("The saved attempt is no longer active. You can join a new exam now.");
+        return "cleared";
+      }
+
+      nav("/student/exam");
+      return "resumed";
+    } catch (error) {
+      const status = error?.response?.status;
+      if ([401, 403, 404].includes(status)) {
+        clearStudentAttempt();
+        setRecovery(null);
+        toast.info("The saved exam login expired. Please verify your details again.");
+        return "cleared";
+      }
+      toast.error("Could not validate the saved exam attempt. Check the connection and retry.");
+      return "blocked";
+    } finally {
+      setResuming(false);
+    }
+  };
+
+  const continueWithDetails = async ({ sessionCode, enteredStudentId, enteredName }) => {
+    const normalizedCode = String(sessionCode || "").trim().toUpperCase();
+    if (!normalizedCode) return;
+    setLoading(true);
+    if (recovery) {
+      const recoveryResult = await resumeExistingAttempt();
+      if (recoveryResult !== "cleared") {
+        setLoading(false);
+        return;
+      }
+    }
+
+    try {
+      const { data } = await api.get(`/public/sessions/by-code/${normalizedCode}`);
+      const student = {
+        student_id: String(enteredStudentId || "").trim(),
+        full_name: String(enteredName || "").trim(),
+      };
+      saveStudentJoinContext(data, student);
+
+      if (data.require_identity_verification === false) {
+        const { data: candidate } = await api.post("/public/candidates/join", {
+          session_code: data.session_code,
+          student_id: student.student_id,
+          full_name: student.full_name,
+        });
+        saveCandidateAttempt({ candidateId: candidate.id, candidateToken: candidate.candidate_token });
+        nav("/student/exam");
+        return;
+      }
+
+      nav("/student/verify");
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || "Invalid code");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const next = async (e) => {
     e?.preventDefault?.();
-    if (!code.trim()) return;
-    setLoading(true);
-    try {
-      const { data } = await api.get(`/public/sessions/by-code/${code.trim().toUpperCase()}`);
-      sessionStorage.setItem("ag_join_session", JSON.stringify(data));
-      sessionStorage.setItem("ag_join_student", JSON.stringify({ student_id: studentId, full_name: name }));
-      nav("/student/verify");
-    } catch (e) {
-      toast.error(e?.response?.data?.detail || "Invalid code");
-    } finally { setLoading(false); }
+    await continueWithDetails({
+      sessionCode: code,
+      enteredStudentId: studentId,
+      enteredName: name,
+    });
   };
 
   return (
@@ -65,6 +169,27 @@ export default function StudentEntry() {
           <p className="text-violet text-sm">Enter your details to begin verification</p>
         </div>
         <div className="space-y-4">
+          {recovery && (
+            <div className="rounded-xl border border-cyan/40 bg-cyan/5 p-4" data-testid="saved-attempt-panel">
+              <div className="label-mono text-cyan">SAVED EXAM ATTEMPT</div>
+              <p className="text-sm text-white/70 mt-1">
+                {recovery.student?.full_name || "This student"}
+                {recovery.session?.session_code ? ` · ${recovery.session.session_code}` : ""}
+              </p>
+              <p className="text-xs text-white/50 mt-1">
+                Validate this login with the server and return to the existing attempt instead of joining twice.
+              </p>
+              <button
+                type="button"
+                data-testid="resume-attempt-btn"
+                onClick={() => void resumeExistingAttempt()}
+                disabled={resuming || loading}
+                className="btn-ghost-cyan w-full rounded-lg py-2 mt-3 flex items-center justify-center gap-2"
+              >
+                {resuming ? "Validating..." : "Return to Exam"} <ChevronRight size={16} />
+              </button>
+            </div>
+          )}
           <div>
             <label className="label-mono">Session Code</label>
             <input data-testid="code-input" className="input-hud mt-1 tracking-widest text-center"
