@@ -13,13 +13,14 @@ import {
   normalizePolicy,
   sanitizeAttemptedUrl,
 } from "./rule-helpers.js";
-import { buildQuickSessionPayload, validateLoginForm } from "./quick-session.js";
+import { buildQuickSessionPayload, validateJoinForm, validateLoginForm } from "./quick-session.js";
 import {
   ACCESS_REQUEST_PATH,
   ACTIVE_QUICK_SESSION_STORAGE_KEY,
   AUTH_LOGIN_PATH,
   BUILD_TRUSTED_API_ORIGINS,
   BUILD_TRUSTED_APP_ORIGINS,
+  CANDIDATE_JOIN_PATH,
   DEPLOYMENT_STORAGE_KEY,
   FETCH_TIMEOUT_MS,
   HEARTBEAT_PATH,
@@ -410,6 +411,48 @@ async function endQuickSession() {
   await readJsonResponse(response, "quick_session_end_failed");
   await clearActiveQuickSession();
   return { ended: true };
+}
+
+async function joinFromExtension({ sessionCode, studentId, fullName }) {
+  const deployment = await getOrDetectDeployment();
+  assert(deployment, "deployment_not_configured", "Connect this extension to an AccessGuard server first");
+
+  const current = await readRuntime();
+  assert(!current.candidateToken, "already_armed_for_candidate", "This device is already joined to an exam attempt");
+
+  const { sessionCode: code, studentId: id, fullName: name } = validateJoinForm({ sessionCode, studentId, fullName });
+
+  const response = await fetchWithTimeout(endpointUrl(deployment.apiBase, CANDIDATE_JOIN_PATH), {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify({
+      session_code: code,
+      student_id: id,
+      full_name: name,
+      id_front_b64: "",
+      id_back_b64: "",
+      selfie_b64: "",
+      liveness_passed: true,
+      face_match_score: 1,
+    }),
+  });
+  const candidate = await readJsonResponse(response, "extension_join_failed");
+  const candidateId = validateCandidateId(candidate?.id);
+  const candidateToken = validateCandidateToken(candidate?.candidate_token);
+
+  const armedExamUrl = normalizeExamUrl("/student/exam", deployment.appOrigin);
+  const tab = await chrome.tabs.create({ url: armedExamUrl, active: true });
+
+  return finalizeArm({
+    candidateId,
+    candidateToken,
+    apiBase: deployment.apiBase,
+    appOrigin: deployment.appOrigin,
+    armedExamUrl,
+    examTabId: tab.id,
+    examWindowId: tab.windowId,
+    managed: deployment.managed,
+  });
 }
 
 async function fetchQuickSessionCandidateCount(apiBase, token, sessionId) {
@@ -1149,6 +1192,7 @@ async function handlePopupMessage(message, sender) {
   if (message?.action === "INVIGILATOR_LOGOUT") return invigilatorLogout();
   if (message?.action === "CREATE_QUICK_SESSION") return createQuickSession(message);
   if (message?.action === "END_QUICK_SESSION") return endQuickSession();
+  if (message?.action === "EXTENSION_JOIN") return publicStatus(await joinFromExtension(message));
   throw new LockdownError("unsupported_action", "Unsupported popup action");
 }
 

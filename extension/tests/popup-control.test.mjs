@@ -256,3 +256,94 @@ test("an expired invigilator token is cleared instead of shown as signed in fore
   assert.equal(status.data.quickSession.active, false);
   assert.equal(storage.accessguardInvigilatorAuth, null);
 });
+
+test("a student can join a quick session directly from the popup, and a second join is refused", async () => {
+  const { chrome, listeners, storage } = createChromeMock();
+  globalThis.chrome = chrome;
+  const fetchCalls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    fetchCalls.push({ url: String(url), options });
+    const href = String(url);
+    if (href.includes("/public/candidates/join")) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ id: "candidate-9", candidate_token: "candidate-token-long-enough", status: "approved" }),
+      };
+    }
+    if (href.includes("/public/extension/policy")) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          candidate_id: "candidate-9",
+          session_id: "session-1",
+          state: "enforced",
+          enforcement: true,
+          policy_version: 1,
+          exam_url: "https://exam.example.edu/student/exam",
+          app_origins: ["https://exam.example.edu"],
+          allowed_origins: [],
+          timestamps: { generated_at: new Date().toISOString() },
+        }),
+      };
+    }
+    return { ok: true, status: 200, json: async () => ({ ok: true }) };
+  };
+
+  await importFreshServiceWorker();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const send = makeSend(listeners);
+
+  await send({ scope: "accessguard-popup", action: "CONFIGURE_DEPLOYMENT", appUrl: "https://exam.example.edu" });
+
+  const joined = await send({
+    scope: "accessguard-popup",
+    action: "EXTENSION_JOIN",
+    sessionCode: "quik-abcd-efgh",
+    studentId: "S-42",
+    fullName: "Asha Perera",
+  });
+
+  assert.equal(joined.ok, true);
+  assert.equal(joined.data.mode, "enforced");
+  assert.equal(joined.data.candidateId, "candidate-9");
+  const joinCall = fetchCalls.find((c) => c.url.includes("/public/candidates/join"));
+  assert.equal(JSON.parse(joinCall.options.body).session_code, "QUIK-ABCD-EFGH");
+  assert.equal(storage.accessguardRuntime.candidateId, "candidate-9");
+
+  const secondJoin = await send({
+    scope: "accessguard-popup",
+    action: "EXTENSION_JOIN",
+    sessionCode: "OTHR-WXYZ-1234",
+    studentId: "S-99",
+    fullName: "Someone Else",
+  });
+  assert.equal(secondJoin.ok, false);
+  assert.equal(secondJoin.error.code, "already_armed_for_candidate");
+});
+
+test("joining with an unknown session code surfaces the backend's error", async () => {
+  const { chrome, listeners } = createChromeMock();
+  globalThis.chrome = chrome;
+  globalThis.fetch = async (url) => {
+    if (String(url).includes("/public/candidates/join")) {
+      return { ok: false, status: 404, json: async () => ({ detail: "Invalid session code" }) };
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  };
+  await importFreshServiceWorker();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const send = makeSend(listeners);
+
+  await send({ scope: "accessguard-popup", action: "CONFIGURE_DEPLOYMENT", appUrl: "https://exam.example.edu" });
+  const result = await send({
+    scope: "accessguard-popup",
+    action: "EXTENSION_JOIN",
+    sessionCode: "BOGUS-CODE-0000",
+    studentId: "S-1",
+    fullName: "Nobody",
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.error.message, "Invalid session code");
+});
