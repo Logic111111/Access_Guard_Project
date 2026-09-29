@@ -109,6 +109,7 @@ test("popup auto-detects a managed deployment without prompting", async () => {
   const detected = await send({ scope: "accessguard-popup", action: "GET_DEPLOYMENT" });
   assert.equal(detected.ok, true);
   assert.equal(detected.data.appOrigin, "https://managed.example.edu");
+  assert.equal(detected.data.apiBase, "https://managed.example.edu/api");
   assert.equal(detected.data.managed, true);
 });
 
