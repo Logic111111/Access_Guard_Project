@@ -281,7 +281,9 @@ async function getOrDetectDeployment() {
 
   const trust = await loadTrustConfiguration();
   if (trust.appOrigins.length && trust.apiOrigins.length) {
-    return writeDeployment({ appOrigin: trust.appOrigins[0], apiBase: trust.apiOrigins[0], managed: true });
+    const appOrigin = trust.appOrigins[0];
+    const apiBase = normalizeApiBase(trust.apiOrigins[0], appOrigin);
+    return writeDeployment({ appOrigin, apiBase, managed: true });
   }
   return null;
 }
