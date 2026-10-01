@@ -6,6 +6,9 @@ import {
   generateExamCode,
   validateJoinForm,
   validateLoginForm,
+  validateModuleCreateForm,
+  validateModuleEnrollForm,
+  validateStudentLoginForm,
 } from "../quick-session.js";
 
 test("generateExamCode is deterministic and URL-safe for a given timestamp", () => {
@@ -38,6 +41,30 @@ test("buildQuickSessionPayload rejects a missing question or an out-of-range dur
   assert.throws(() => buildQuickSessionPayload({ durationMinutes: 1000, questionText: "Q?" }), TypeError);
 });
 
+test("buildQuickSessionPayload publishes as a module quiz when a moduleCode is given", () => {
+  const payload = buildQuickSessionPayload({
+    durationMinutes: 20,
+    questionText: "What is Ohm's law?",
+    modelAnswer: "V = IR",
+    moduleCode: " ee5206 ",
+  }, 1_700_000_000_000);
+
+  assert.equal(payload.quiz_mode, true);
+  assert.equal(payload.published, true);
+  assert.equal(payload.module_code, "EE5206");
+});
+
+test("buildQuickSessionPayload stays an ad hoc (non-module) session when moduleCode is omitted", () => {
+  const payload = buildQuickSessionPayload({
+    durationMinutes: 20,
+    questionText: "What is Ohm's law?",
+  }, 1_700_000_000_000);
+
+  assert.equal(payload.quiz_mode, false);
+  assert.equal(payload.published, false);
+  assert.equal(payload.module_code, "");
+});
+
 test("validateJoinForm normalizes the session code and requires every field", () => {
   const normalized = validateJoinForm({ sessionCode: " quik-abcd-efgh ", studentId: " S-1 ", fullName: " Asha " });
   assert.deepEqual(normalized, { sessionCode: "QUIK-ABCD-EFGH", studentId: "S-1", fullName: "Asha" });
@@ -54,4 +81,41 @@ test("validateLoginForm requires both an invigilator ID and a password", () => {
   });
   assert.throws(() => validateLoginForm({ password: "secret" }), TypeError);
   assert.throws(() => validateLoginForm({ invId: "EG/STAFF/0001" }), TypeError);
+});
+
+test("validateModuleCreateForm normalizes the code and requires both fields", () => {
+  assert.deepEqual(validateModuleCreateForm({ code: " ee5206 ", name: " Power Electronics " }), {
+    code: "EE5206",
+    name: "Power Electronics",
+  });
+  assert.throws(() => validateModuleCreateForm({ name: "Power Electronics" }), TypeError);
+  assert.throws(() => validateModuleCreateForm({ code: "EE5206" }), TypeError);
+});
+
+test("validateModuleEnrollForm requires an enroll code, student ID, name, and password", () => {
+  const normalized = validateModuleEnrollForm({
+    enrollCode: " ab12cd34 ",
+    studentId: " EG/2023/1042 ",
+    fullName: " Jane Student ",
+    password: "StudentPass1!",
+  });
+  assert.deepEqual(normalized, {
+    enrollCode: "AB12CD34",
+    studentId: "EG/2023/1042",
+    fullName: "Jane Student",
+    password: "StudentPass1!",
+  });
+  assert.throws(() => validateModuleEnrollForm({ studentId: "S-1", fullName: "A", password: "x" }), TypeError);
+  assert.throws(() => validateModuleEnrollForm({ enrollCode: "C", fullName: "A", password: "x" }), TypeError);
+  assert.throws(() => validateModuleEnrollForm({ enrollCode: "C", studentId: "S-1", password: "x" }), TypeError);
+  assert.throws(() => validateModuleEnrollForm({ enrollCode: "C", studentId: "S-1", fullName: "A" }), TypeError);
+});
+
+test("validateStudentLoginForm requires a student ID and password", () => {
+  assert.deepEqual(validateStudentLoginForm({ studentId: " S-1 ", password: "secret" }), {
+    studentId: "S-1",
+    password: "secret",
+  });
+  assert.throws(() => validateStudentLoginForm({ password: "secret" }), TypeError);
+  assert.throws(() => validateStudentLoginForm({ studentId: "S-1" }), TypeError);
 });

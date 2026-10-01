@@ -63,17 +63,182 @@ function stopPolling() {
   }
 }
 
+function getInvigilatorSubtab() {
+  try {
+    return localStorage.getItem("accessguardPopupInvSubtab") || "quick";
+  } catch {
+    return "quick";
+  }
+}
+
+function setInvigilatorSubtab(tab) {
+  try {
+    localStorage.setItem("accessguardPopupInvSubtab", tab);
+  } catch {
+    // Best-effort; the sub-tab still renders for this popup lifetime.
+  }
+}
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[ch]));
+}
+
+function dateTimeLabel(value) {
+  if (!value) return "—";
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? "—" : parsed.toLocaleString();
+}
+
+async function renderModulesView() {
+  el("student-history-container").hidden = true;
+  el("module-roster-container").hidden = true;
+  el("modules-list-container").hidden = false;
+
+  const modules = await send("LIST_MODULES");
+  const list = el("modules-list");
+  list.innerHTML = "";
+  for (const module of modules) {
+    const item = document.createElement("li");
+    item.className = "module-row";
+    item.innerHTML = `<strong>${escapeHtml(module.code)}</strong> — ${escapeHtml(module.name)}<br><span class="mono">Enroll code: ${escapeHtml(module.enroll_code)}</span>`;
+    const rosterBtn = document.createElement("button");
+    rosterBtn.type = "button";
+    rosterBtn.className = "secondary";
+    rosterBtn.textContent = "View roster";
+    rosterBtn.addEventListener("click", () => void renderRoster(module));
+    item.appendChild(rosterBtn);
+    list.appendChild(item);
+  }
+}
+
+async function renderRoster(module) {
+  el("modules-list-container").hidden = true;
+  el("student-history-container").hidden = true;
+  el("module-roster-container").hidden = false;
+  el("roster-module-title").textContent = `${module.code} roster`;
+
+  const list = el("roster-list");
+  list.innerHTML = "<li class=\"module-row\">Loading…</li>";
+  try {
+    const roster = await send("LIST_MODULE_STUDENTS", { moduleId: module.id });
+    list.innerHTML = "";
+    if (!roster.length) {
+      list.innerHTML = "<li class=\"module-row\">No students enrolled yet.</li>";
+      return;
+    }
+    for (const student of roster) {
+      const item = document.createElement("li");
+      item.className = "module-row";
+      item.innerHTML = `<strong>${escapeHtml(student.student_id)}</strong> — ${escapeHtml(student.full_name)}<br><span class="mono">Enrolled ${escapeHtml(dateTimeLabel(student.enrolled_at))}</span>`;
+      const historyBtn = document.createElement("button");
+      historyBtn.type = "button";
+      historyBtn.textContent = "View history";
+      historyBtn.addEventListener("click", () => void renderStudentHistory(module, student));
+      item.appendChild(historyBtn);
+      list.appendChild(item);
+    }
+  } catch (error) {
+    list.innerHTML = `<li class="module-row">${escapeHtml(error.message)}</li>`;
+  }
+}
+
+async function renderStudentHistory(module, student) {
+  el("module-roster-container").hidden = true;
+  el("student-history-container").hidden = false;
+  el("history-student-title").textContent = `${student.full_name} (${student.student_id})`;
+
+  const list = el("history-list");
+  list.innerHTML = "<li class=\"module-row\">Loading…</li>";
+  try {
+    const rows = await send("GET_STUDENT_HISTORY", { moduleId: module.id, studentId: student.student_id });
+    list.innerHTML = "";
+    if (!rows.length) {
+      list.innerHTML = "<li class=\"module-row\">No exam attempts under this module yet.</li>";
+      return;
+    }
+    for (const row of rows) {
+      const item = document.createElement("li");
+      item.className = "module-row";
+      const scoreLine = row.grade
+        ? `<span class="status-pill">${row.grade.total} / ${row.grade.max_total}</span>`
+        : `<span class="mono">Not graded</span>`;
+      item.innerHTML = `<strong>${escapeHtml(row.exam_name)}</strong> — ${escapeHtml(row.status)}<br>${scoreLine}<br><span class="mono">Submitted ${escapeHtml(dateTimeLabel(row.submitted_at))}</span>`;
+
+      const details = document.createElement("div");
+      details.hidden = true;
+      details.style.marginTop = "8px";
+      for (const q of row.questions || []) {
+        const qBlock = document.createElement("div");
+        qBlock.style.marginTop = "6px";
+        const answer = row.answers?.[q.id] || "(no answer)";
+        const perQ = row.grade?.per_question?.[q.id];
+        const feedback = perQ ? ` — ${escapeHtml(String(perQ.score))}/${escapeHtml(String(perQ.max))}: ${escapeHtml(perQ.feedback || "")}` : "";
+        qBlock.innerHTML = `<span class="mono">${escapeHtml(q.text)}</span><br>${escapeHtml(answer)}${feedback}`;
+        details.appendChild(qBlock);
+      }
+
+      const toggleBtn = document.createElement("button");
+      toggleBtn.type = "button";
+      toggleBtn.className = "secondary";
+      toggleBtn.textContent = "Details";
+      toggleBtn.addEventListener("click", () => { details.hidden = !details.hidden; });
+
+      item.appendChild(toggleBtn);
+      item.appendChild(details);
+      list.appendChild(item);
+    }
+  } catch (error) {
+    list.innerHTML = `<li class="module-row">${escapeHtml(error.message)}</li>`;
+  }
+}
+
+async function populateQuickModuleSelect() {
+  const select = el("quick-module-select");
+  const previous = select.value;
+  const modules = await send("LIST_MODULES");
+  select.innerHTML = '<option value="">None — ad hoc session, not tied to a module</option>';
+  for (const module of modules) {
+    const option = document.createElement("option");
+    option.value = module.code;
+    option.textContent = `${module.code} — ${module.name}`;
+    select.appendChild(option);
+  }
+  if (modules.some((m) => m.code === previous)) select.value = previous;
+}
+
 async function renderInvigilatorPanel() {
   el("invigilator-notice").textContent = "";
   const control = await send("GET_CONTROL_STATUS");
 
   el("invigilator-session-bar").hidden = !control.invigilator.signedIn;
+  el("invigilator-signed-in-view").hidden = !control.invigilator.signedIn;
   el("invigilator-name").textContent = control.invigilator.signedIn
     ? `Signed in as ${control.invigilator.name || control.invigilator.invId}`
     : "";
   el("invigilator-login-view").hidden = control.invigilator.signedIn;
-  el("quick-create-view").hidden = !control.invigilator.signedIn || control.quickSession.active;
-  el("quick-active-view").hidden = !control.invigilator.signedIn || !control.quickSession.active;
+
+  const subtab = getInvigilatorSubtab();
+  el("inv-subtab-quick").classList.toggle("active", subtab === "quick");
+  el("inv-subtab-modules").classList.toggle("active", subtab === "modules");
+  el("modules-view").hidden = !control.invigilator.signedIn || subtab !== "modules";
+  el("quick-create-view").hidden = !control.invigilator.signedIn || subtab !== "quick" || control.quickSession.active;
+  el("quick-active-view").hidden = !control.invigilator.signedIn || subtab !== "quick" || !control.quickSession.active;
+
+  if (control.invigilator.signedIn && subtab === "modules") {
+    await renderModulesView().catch((error) => {
+      el("invigilator-notice").textContent = error.message;
+      el("invigilator-notice").className = "notice error";
+    });
+  }
+
+  if (control.invigilator.signedIn && subtab === "quick" && !control.quickSession.active) {
+    await populateQuickModuleSelect().catch((error) => {
+      el("invigilator-notice").textContent = error.message;
+      el("invigilator-notice").className = "notice error";
+    });
+  }
 
   if (control.quickSession.active) {
     el("quick-active-code").textContent = control.quickSession.sessionCode || "—";
@@ -95,8 +260,87 @@ async function renderInvigilatorPanel() {
   return control;
 }
 
+function getStudentSubtab() {
+  try {
+    return localStorage.getItem("accessguardPopupStudentSubtab") || "join";
+  } catch {
+    return "join";
+  }
+}
+
+function setStudentSubtab(tab) {
+  try {
+    localStorage.setItem("accessguardPopupStudentSubtab", tab);
+  } catch {
+    // Best-effort; the sub-tab still renders for this popup lifetime.
+  }
+}
+
+function renderModuleQuizList(moduleStatus) {
+  const list = el("module-quiz-list");
+  list.innerHTML = "";
+  for (const module of moduleStatus.modules) {
+    const item = document.createElement("li");
+    item.className = "module-row";
+    const quiz = module.latestQuiz;
+    const quizLine = quiz
+      ? `<span class="status-pill">Quiz ready</span> ${escapeHtml(quiz.quiz_prompt_title || quiz.exam_name)}`
+      : `<span class="mono">No published quiz</span>`;
+    item.innerHTML = `<strong>${escapeHtml(module.code)}</strong> — ${escapeHtml(module.name)}<br>${quizLine}`;
+    if (quiz) {
+      const joinBtn = document.createElement("button");
+      joinBtn.type = "button";
+      joinBtn.textContent = "Join Quiz";
+      joinBtn.addEventListener("click", async () => {
+        try {
+          await send("OPEN_MODULE_QUIZ", { moduleCode: module.code });
+        } catch (error) {
+          el("module-notice").textContent = error.message;
+          el("module-notice").className = "notice error";
+        }
+      });
+      item.appendChild(joinBtn);
+    }
+    list.appendChild(item);
+  }
+}
+
+async function renderModulePanel() {
+  el("module-notice").textContent = "";
+  const status = await send("GET_MODULE_STATUS");
+  el("module-enroll-view").hidden = status.signedIn;
+  el("module-list-view").hidden = !status.signedIn;
+  if (status.signedIn) {
+    el("module-student-name").textContent = `${status.fullName || status.studentId}`;
+    renderModuleQuizList(status);
+    stopPolling();
+    pollTimer = setInterval(async () => {
+      try {
+        renderModuleQuizList(await send("GET_MODULE_STATUS"));
+      } catch {
+        // A transient poll failure is not worth surfacing; the next tick retries.
+      }
+    }, 15000);
+  } else {
+    stopPolling();
+  }
+}
+
 async function renderStudentPanel() {
   el("student-notice").textContent = "";
+  const subtab = getStudentSubtab();
+  el("student-subtab-join").classList.toggle("active", subtab === "join");
+  el("student-subtab-modules").classList.toggle("active", subtab === "modules");
+  el("student-join-view").hidden = subtab !== "join";
+  el("student-armed-view").hidden = true;
+  el("module-panel").hidden = subtab !== "modules";
+
+  if (subtab === "modules") {
+    await renderModulePanel();
+    return;
+  }
+  stopPolling();
+
   const status = await send("GET_STATUS");
   const armed = Boolean(status?.mode) && status.mode !== "inactive" && status.mode !== "available";
   el("student-join-view").hidden = armed;
@@ -170,6 +414,7 @@ el("quick-start-btn").addEventListener("click", async () => {
       questionText: el("quick-question").value,
       modelAnswer: el("quick-model-answer").value,
       whitelistedUrls: el("quick-urls").value.split("\n").map((line) => line.trim()).filter(Boolean),
+      moduleCode: el("quick-module-select").value,
     });
     el("invigilator-notice").textContent = "";
     await renderInvigilatorPanel();
@@ -222,6 +467,73 @@ el("refresh-policy").addEventListener("click", async () => {
   } finally {
     el("refresh-policy").disabled = false;
   }
+});
+
+el("inv-subtab-quick").addEventListener("click", () => { setInvigilatorSubtab("quick"); void renderInvigilatorPanel(); });
+el("inv-subtab-modules").addEventListener("click", () => { setInvigilatorSubtab("modules"); void renderInvigilatorPanel(); });
+
+el("module-create-btn").addEventListener("click", async () => {
+  el("invigilator-notice").textContent = "Creating module…";
+  el("invigilator-notice").className = "notice";
+  try {
+    await send("CREATE_MODULE", {
+      code: el("module-code-input").value,
+      name: el("module-name-input").value,
+    });
+    el("module-code-input").value = "";
+    el("module-name-input").value = "";
+    el("invigilator-notice").textContent = "";
+    await renderModulesView();
+  } catch (error) {
+    el("invigilator-notice").textContent = error.message;
+    el("invigilator-notice").className = "notice error";
+  }
+});
+
+el("roster-back-btn").addEventListener("click", () => { void renderModulesView(); });
+el("history-back-btn").addEventListener("click", () => {
+  el("student-history-container").hidden = true;
+  el("module-roster-container").hidden = false;
+});
+
+el("student-subtab-join").addEventListener("click", () => { setStudentSubtab("join"); void renderStudentPanel(); });
+el("student-subtab-modules").addEventListener("click", () => { setStudentSubtab("modules"); void renderStudentPanel(); });
+
+el("module-enroll-btn").addEventListener("click", async () => {
+  el("module-notice").textContent = "Enrolling…";
+  el("module-notice").className = "notice";
+  try {
+    await send("MODULE_ENROLL", {
+      enrollCode: el("module-enroll-code-input").value,
+      studentId: el("module-student-id-input").value,
+      fullName: el("module-full-name-input").value,
+      password: el("module-password-input").value,
+    });
+    await renderModulePanel();
+  } catch (error) {
+    el("module-notice").textContent = error.message;
+    el("module-notice").className = "notice error";
+  }
+});
+
+el("module-signin-btn").addEventListener("click", async () => {
+  el("module-notice").textContent = "Signing in…";
+  el("module-notice").className = "notice";
+  try {
+    await send("MODULE_LOGIN", {
+      studentId: el("module-student-id-input").value,
+      password: el("module-password-input").value,
+    });
+    await renderModulePanel();
+  } catch (error) {
+    el("module-notice").textContent = error.message;
+    el("module-notice").className = "notice error";
+  }
+});
+
+el("module-signout-btn").addEventListener("click", async () => {
+  await send("MODULE_LOGOUT");
+  await renderModulePanel();
 });
 
 void init();

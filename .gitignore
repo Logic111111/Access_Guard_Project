@@ -41,6 +41,10 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 dump.rdb
+*_dev.log
+
+# Packaged extension builds (regenerate from extension/ instead of committing)
+*.crx
 
 # System files
 .DS_Store
@@ -76,6 +80,9 @@ agenthub/agents/youtube/db
 # Build caches
 .cache/
 
+# Superpowers subagent-driven-development scratch workspaces
+.superpowers/
+
 memory/test_credentials.md
 
 # Mobile development
@@ -87,6 +94,8 @@ frontend/node_modules/.cache/default-development/4.pack
 .env
 .env.*
 *.env
+!.env.example
+!**/.env.example
 credentials.json
 *.pem
 *.key

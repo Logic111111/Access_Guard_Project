@@ -1,0 +1,14 @@
+# Use a MongoDB Atlas cluster instead of the self-hosted `mongo` container.
+#
+#   docker compose -f compose.yaml -f compose.https.yaml -f compose.atlas.yaml \
+#     up -d backend frontend caddy
+#
+# Naming only backend/frontend/caddy means the `mongo` service defined in
+# compose.yaml is simply never started. This file only needs to stop the
+# backend from waiting on that container's healthcheck and point MONGO_URL at
+# the Atlas connection string instead.
+services:
+  backend:
+    depends_on: !reset []
+    environment:
+      MONGO_URL: "${ATLAS_MONGO_URL:?Set ATLAS_MONGO_URL in .env to your MongoDB Atlas connection string}"

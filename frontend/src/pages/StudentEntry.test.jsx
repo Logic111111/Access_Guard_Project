@@ -118,6 +118,47 @@ describe("StudentEntry quick-join (no identity verification)", () => {
     expect(getStoredCandidateId()).toBe("candidate-9");
   });
 
+  test("joining a different quiz than a stale saved attempt does not silently resume the old one", async () => {
+    // Simulates a browser that still has an old exam attempt cached (e.g. from
+    // an earlier quiz) when the student clicks a notification/link for a
+    // brand-new one — the old attempt must not intercept the new join.
+    saveStudentJoinContext(
+      { session_code: "OLD-EXAM-1", exam_name: "Old Exam" },
+      { student_id: "S-OLD", full_name: "Old Student" }
+    );
+    saveCandidateAttempt({ candidateId: "old-candidate-1", candidateToken: "old-token-long-enough" });
+
+    api.get.mockResolvedValueOnce({
+      data: {
+        session_code: "NEW-QUIZ-9",
+        exam_name: "New Quiz",
+        require_identity_verification: false,
+      },
+    });
+    api.post.mockResolvedValueOnce({
+      data: { id: "new-candidate-9", candidate_token: "new-candidate-token-long-enough" },
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/student?code=NEW-QUIZ-9&student_id=S-NEW&name=New+Student"]}>
+        <Routes>
+          <Route path="/student" element={<StudentEntry />} />
+          <Route path="/student/exam" element={<div>Recovered exam route</div>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText("Recovered exam route")).toBeInTheDocument();
+    // The old candidate was never re-validated — this must be a fresh join.
+    expect(api.get).toHaveBeenCalledWith("/public/sessions/by-code/NEW-QUIZ-9");
+    expect(api.post).toHaveBeenCalledWith("/public/candidates/join", {
+      session_code: "NEW-QUIZ-9",
+      student_id: "S-NEW",
+      full_name: "New Student",
+    });
+    expect(getStoredCandidateId()).toBe("new-candidate-9");
+  });
+
   test("still requires verification when the session does not waive it", async () => {
     api.get.mockResolvedValueOnce({
       data: { session_code: "EXAM-1", exam_name: "Full Exam" },

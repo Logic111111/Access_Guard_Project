@@ -1,18 +1,48 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Logo } from "../components/Logo";
-import { api } from "../lib/api";
+import { api, candidateAuthConfig } from "../lib/api";
 import { Download, Check, Home } from "lucide-react";
+import {
+  clearStudentAttempt,
+  getStoredCandidateId,
+  getStoredCandidateToken,
+} from "../lib/studentSession";
 
 export default function StudentReceipt() {
   const nav = useNavigate();
   const [receipt, setReceipt] = useState(null);
-  const cid = sessionStorage.getItem("ag_candidate_id");
+  const [loadError, setLoadError] = useState("");
+  const cid = getStoredCandidateId();
+  const candidateToken = getStoredCandidateToken();
 
   useEffect(() => {
-    if (!cid) { nav("/student"); return; }
-    api.get(`/public/receipt/${cid}`).then(r => setReceipt(r.data));
-  }, [cid, nav]);
+    if (!cid || !candidateToken) {
+      clearStudentAttempt();
+      nav("/student", { replace: true });
+      return;
+    }
+    let cancelled = false;
+    api.get(`/public/receipt/${cid}`, candidateAuthConfig())
+      .then((response) => {
+        if (cancelled) return;
+        if (response.data?.candidate?.status !== "finished") {
+          nav("/student/exam", { replace: true });
+          return;
+        }
+        setReceipt(response.data);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        if ([401, 403, 404].includes(error?.response?.status)) {
+          clearStudentAttempt();
+          nav("/student", { replace: true });
+          return;
+        }
+        setLoadError("The receipt could not be loaded. Check the connection and refresh this page.");
+      });
+    return () => { cancelled = true; };
+  }, [candidateToken, cid, nav]);
 
   const download = () => {
     if (!receipt) return;
@@ -38,8 +68,15 @@ AccessGuard secure monitoring.
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url; a.download = `accessguard-receipt-${receipt.receipt_id}.txt`; a.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
   };
 
+  const goHome = () => {
+    clearStudentAttempt();
+    nav("/student", { replace: true });
+  };
+
+  if (loadError) return <div className="min-h-screen hud-bg flex items-center justify-center text-white/70 p-6 text-center">{loadError}</div>;
   if (!receipt) return <div className="min-h-screen hud-bg flex items-center justify-center text-white/60">Loading…</div>;
 
   return (
@@ -69,7 +106,7 @@ AccessGuard secure monitoring.
             className="btn-cyan rounded-full px-5 py-2.5 flex items-center gap-2">
             <Download size={16}/> Download Receipt
           </button>
-          <button onClick={() => nav("/student")} className="btn-ghost-cyan rounded-full px-5 py-2.5 flex items-center gap-2">
+          <button onClick={goHome} className="btn-ghost-cyan rounded-full px-5 py-2.5 flex items-center gap-2">
             <Home size={16}/> Home
           </button>
         </div>

@@ -1,0 +1,16 @@
+.env
+.env.*
+!.env.example
+.pytest_cache/
+__pycache__/
+*.py[cod]
+*.log
+.coverage
+htmlcov/
+tests/
+venv/
+.venv/
+.git/
+.gitignore
+Dockerfile*
+README*

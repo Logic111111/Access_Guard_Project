@@ -6,6 +6,12 @@ import { Camera, Upload, Check, Eye } from "lucide-react";
 import { toast } from "sonner";
 import * as faceapi from "face-api.js";
 import Tesseract from "tesseract.js";
+import {
+  getStoredJoinSession,
+  getStoredJoinStudent,
+  getStoredStudentAttempt,
+  saveCandidateAttempt,
+} from "../lib/studentSession";
 
 const FACE_MODELS_URL = "https://justadudewhohacks.github.io/face-api.js/models";
 let modelsReady = null;
@@ -56,8 +62,19 @@ export default function StudentVerify() {
   const [extractedFace, setExtractedFace] = useState(null);
   const [ocrLoading, setOcrLoading] = useState(false);
 
-  const sessionData = JSON.parse(sessionStorage.getItem("ag_join_session") || "{}");
-  const studentData = JSON.parse(sessionStorage.getItem("ag_join_student") || "{}");
+  const sessionData = getStoredJoinSession();
+  const studentData = getStoredJoinStudent();
+
+  useEffect(() => {
+    const attempt = getStoredStudentAttempt();
+    if (attempt.candidateId && attempt.candidateToken) {
+      nav("/student/exam", { replace: true });
+      return;
+    }
+    if (!sessionData.session_code || !studentData.student_id || !studentData.full_name) {
+      nav("/student", { replace: true });
+    }
+  }, [nav, sessionData.session_code, studentData.full_name, studentData.student_id]);
 
   useEffect(() => {
     loadFaceModels();
@@ -241,12 +258,20 @@ export default function StudentVerify() {
         liveness_passed: blinks >= 2 || blinks === -1,
         face_match_score: Number(score.toFixed(3)),
       });
-      sessionStorage.setItem("ag_candidate_id", data.id);
-      if (data.candidate_token) sessionStorage.setItem("ag_candidate_token", data.candidate_token);
-      sessionStorage.setItem("ag_face_match", String(score));
+      saveCandidateAttempt({
+        candidateId: data.id,
+        candidateToken: data.candidate_token,
+        faceMatch: score,
+      });
       toast.success("Joined! Awaiting invigilator approval.");
       nav("/student/exam");
     } catch (e) {
+      const attempt = getStoredStudentAttempt();
+      if (e?.response?.status === 409 && attempt.candidateId && attempt.candidateToken) {
+        toast.info("Your existing exam attempt was restored.");
+        nav("/student/exam", { replace: true });
+        return;
+      }
       toast.error(e?.response?.data?.detail || "Submission failed");
     } finally { setSubmitting(false); }
   };

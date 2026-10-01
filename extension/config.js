@@ -22,3 +22,12 @@ export const INVIGILATOR_AUTH_STORAGE_KEY = "accessguardInvigilatorAuth";
 export const ACTIVE_QUICK_SESSION_STORAGE_KEY = "accessguardActiveQuickSession";
 export const AUTH_LOGIN_PATH = "/auth/login";
 export const SESSIONS_PATH = "/sessions";
+
+export const MODULE_AUTH_STORAGE_KEY = "accessguardModuleAuth";
+export const MODULES_PATH = "/modules";
+export const STUDENT_JOIN_PATH = "/student/auth/join";
+export const STUDENT_LOGIN_PATH = "/student/auth/login";
+export const STUDENT_ME_PATH = "/student/me";
+export const STUDENT_MODULES_PATH = "/student/modules";
+export const QUIZ_POLL_ALARM = "accessguard-quiz-poll";
+export const QUIZ_POLL_MINUTES = 1;

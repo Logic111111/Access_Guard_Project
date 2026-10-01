@@ -174,8 +174,8 @@ Write-Host "       AccessGuard Test Mode - READY!               " -ForegroundCol
 Write-Host "====================================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "  INVIGILATOR LOGIN:" -ForegroundColor White
-Write-Host "    ID:       EG/STAFF/0001" -ForegroundColor Yellow
-Write-Host "    Password: AccessGuard2026!" -ForegroundColor Yellow
+Write-Host "    ID:       INV0001" -ForegroundColor Yellow
+Write-Host "    Password: Password123!" -ForegroundColor Yellow
 Write-Host "    URL:      http://${APP_HOST}:${FRONTEND_PORT}/login" -ForegroundColor Cyan
 Write-Host ""
 
@@ -202,8 +202,8 @@ $credContent = @"
 # AccessGuard - Test Mode Credentials
 
 ## Invigilator Login
-- **ID:** EG/STAFF/0001
-- **Password:** AccessGuard2026!
+- **ID:** INV0001
+- **Password:** Password123!
 - **URL:** http://${APP_HOST}:${FRONTEND_PORT}/login
 
 ## Student Access

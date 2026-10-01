@@ -12,7 +12,7 @@ import re
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import List, Optional, Dict, Any, Set, Literal
+from typing import List, Optional, Dict, Any, Set, Literal, Tuple
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
@@ -46,8 +46,9 @@ EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", os.environ.get("GOOGLE_API_KEY", ""))
+GRADING_CONCURRENCY = int(os.environ.get("GRADING_CONCURRENCY", "5") or "5")
 ADMIN_INV_ID = os.environ.get("ADMIN_INV_ID", "admin")
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "password")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 REMOTE_LOGIN_SECRET = os.environ.get("REMOTE_LOGIN_SECRET", "remote-access-2026")
 LOGIN_AUDIT_COLLECTION = "invigilator_login_audit"
 ENVIRONMENT = os.environ.get("ENVIRONMENT", os.environ.get("APP_ENV", "development")).strip().lower()
@@ -502,10 +503,16 @@ def build_extension_policy(
         except ValueError:
             pass
 
+    now_value = generated_at or now_iso()
+    clock = parse_iso_datetime(now_value) or datetime.now(timezone.utc)
     state = extension_policy_state(candidate.get("status", ""), session.get("status", ""))
+    # No invigilator has to manually end an unattended quick/module quiz for the
+    # extension to release: once the session's own duration has elapsed, treat
+    # any still-enforcing state as finished rather than enforcing forever.
+    if state in ENFORCING_EXTENSION_STATES and seconds_remaining(session, now=clock) <= 0:
+        state = "finished"
     lockdown_mode = session.get("lockdown_mode", "extension_required")
     enforcement = state in ENFORCING_EXTENSION_STATES and lockdown_mode == "extension_required"
-    now_value = generated_at or now_iso()
     return {
         "candidate_id": candidate["id"],
         "session_id": session["id"],
@@ -577,13 +584,34 @@ def production_config_errors() -> List[str]:
     errors: List[str] = []
     if JWT_SECRET == "accessguard-secret" or len(JWT_SECRET) < 32:
         errors.append("JWT_SECRET must be a non-default value of at least 32 characters")
-    if ADMIN_PASSWORD == "password":
-        errors.append("ADMIN_PASSWORD must not use the development default")
+    if not ADMIN_PASSWORD or ADMIN_PASSWORD == "password":
+        errors.append("ADMIN_PASSWORD must be set to a non-default value in production")
     if REMOTE_LOGIN_SECRET == "remote-access-2026":
         errors.append("REMOTE_LOGIN_SECRET must not use the development default")
     if os.environ.get("CORS_ORIGINS", "*").strip() == "*":
         errors.append("CORS_ORIGINS must be explicit in production")
     return errors
+
+
+def resolve_admin_password(configured: str) -> Tuple[str, bool]:
+    """Never falls back to a fixed default password. Returns (password, was_generated):
+    the configured value if one was set, otherwise a fresh random one-time password."""
+    if configured:
+        return configured, False
+    return secrets.token_urlsafe(12), True
+
+
+def grading_config_warnings() -> List[str]:
+    """Non-fatal: unlike production_config_errors, missing grading keys don't block
+    startup (vector-similarity fallback grading still works), but should be loud."""
+    if not IS_PRODUCTION:
+        return []
+    if EMERGENT_LLM_KEY or ANTHROPIC_API_KEY or OPENAI_API_KEY or GEMINI_API_KEY:
+        return []
+    return [
+        "No grading LLM key configured (EMERGENT_LLM_KEY/ANTHROPIC_API_KEY/OPENAI_API_KEY/"
+        "GEMINI_API_KEY) — AI grading will silently use the weaker vector-overlap fallback."
+    ]
 
 
 async def log_invigilator_login(
@@ -619,6 +647,21 @@ async def current_invigilator(creds: HTTPAuthorizationCredentials = Depends(bear
     user = await db.invigilators.find_one({"inv_id": payload["sub"]}, {"_id": 0, "password_hash": 0})
     if not user:
         raise HTTPException(401, "User not found")
+    return user
+
+
+async def current_student(creds: HTTPAuthorizationCredentials = Depends(bearer)) -> Dict[str, Any]:
+    if not creds:
+        raise HTTPException(401, "Missing token")
+    try:
+        payload = jwt.decode(creds.credentials, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except jwt.PyJWTError:
+        raise HTTPException(401, "Invalid token")
+    if payload.get("role") != "student":
+        raise HTTPException(403, "Forbidden")
+    user = await db.students.find_one({"student_id": payload["sub"]}, {"_id": 0, "password_hash": 0})
+    if not user:
+        raise HTTPException(401, "Student not found")
     return user
 
 
@@ -695,6 +738,29 @@ class TokenOut(BaseModel):
     token: str
     inv_id: str
     name: str
+
+
+class ModuleCreateIn(BaseModel):
+    code: str
+    name: str
+
+
+class StudentJoinModuleIn(BaseModel):
+    enroll_code: str
+    student_id: str
+    full_name: str
+    password: str
+
+
+class StudentLoginIn(BaseModel):
+    student_id: str
+    password: str
+
+
+class StudentTokenOut(BaseModel):
+    token: str
+    student_id: str
+    full_name: str
 
 
 class SessionConfig(BaseModel):
@@ -803,6 +869,8 @@ async def lifespan(_app: FastAPI):
     config_errors = production_config_errors()
     if config_errors:
         raise RuntimeError("Unsafe production configuration: " + "; ".join(config_errors))
+    for warning in grading_config_warnings():
+        log.warning(warning)
     http_client = httpx.AsyncClient(timeout=30.0)
     # Log the actual module file path on startup to help debugging reloads
     try:
@@ -815,27 +883,34 @@ async def lifespan(_app: FastAPI):
     except Exception:
         pass
     await init_storage_async()
-    # Seed admin and example invigilators for testing
+    # First index-creation in this codebase; idempotent no-ops on every later restart.
+    await db.modules.create_index([("owner_inv_id", 1), ("code", 1)], unique=True)
+    await db.modules.create_index("enroll_code", unique=True)
+    await db.students.create_index("student_id", unique=True)
+    await db.enrollments.create_index([("student_id", 1), ("module_id", 1)], unique=True)
+    # Seed the admin account. No fixed default password is ever used: if ADMIN_PASSWORD
+    # isn't configured, a random one-time password is generated and logged instead.
     existing = await db.invigilators.find_one({"inv_id": ADMIN_INV_ID})
     if not existing:
+        admin_password, generated = resolve_admin_password(ADMIN_PASSWORD)
         await db.invigilators.insert_one({
             "inv_id": ADMIN_INV_ID,
             "name": "Alex Chen",
-            "password_hash": hash_pw(ADMIN_PASSWORD),
+            "password_hash": hash_pw(admin_password),
             "created_at": now_iso(),
         })
-        log.info(f"Seeded admin {ADMIN_INV_ID}")
+        if generated:
+            log.warning(
+                f"No ADMIN_PASSWORD configured — generated a one-time password for "
+                f"admin '{ADMIN_INV_ID}': {admin_password}. Set ADMIN_PASSWORD in .env "
+                f"to use a fixed value instead."
+            )
+        else:
+            log.info(f"Seeded admin {ADMIN_INV_ID}")
 
-    # Ensure we have a local test invigilator, but never seed it in production.
-    if not IS_PRODUCTION and not await db.invigilators.find_one({"inv_id": "EG/STAFF/0001"}):
-        await db.invigilators.insert_one({
-            "inv_id": "EG/STAFF/0001",
-            "name": "Test Invigilator",
-            "password_hash": hash_pw("AccessGuard2026!"),
-            "phone": "+15550101",
-            "created_at": now_iso(),
-        })
-        log.info("Seeded invigilator EG/STAFF/0001")
+    # No other invigilator account is auto-seeded. For local/dev testing, create one
+    # explicitly via POST /api/test/seed (non-production only) instead of a fixed
+    # credential baked into every startup.
     yield
     if http_client:
         await http_client.aclose()
@@ -944,6 +1019,208 @@ async def get_login_logs(inv_id: Optional[str] = None, user=Depends(current_invi
     query = {"inv_id": inv_id or user["inv_id"]}
     rows = await db[LOGIN_AUDIT_COLLECTION].find(query, {"_id": 0}).sort("created_at", -1).to_list(100)
     return rows
+
+
+# ---- Modules & Student Accounts ----
+async def _owned_module(module_id: str, user: Dict[str, Any]) -> Dict[str, Any]:
+    module = await db.modules.find_one({"id": module_id, "owner_inv_id": user["inv_id"]}, {"_id": 0})
+    if not module:
+        raise HTTPException(404, "Module not found")
+    return module
+
+
+@api.post("/modules")
+async def create_module(body: ModuleCreateIn, user=Depends(current_invigilator)):
+    code = body.code.strip().upper()
+    name = body.name.strip()
+    if not code or not name:
+        raise HTTPException(400, "Module code and name are required")
+    existing = await db.modules.find_one({"owner_inv_id": user["inv_id"], "code": code})
+    if existing:
+        raise HTTPException(409, "You already have a module with this code")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "code": code,
+        "name": name,
+        "owner_inv_id": user["inv_id"],
+        "enroll_code": secrets.token_hex(4).upper(),
+        "created_at": now_iso(),
+    }
+    await db.modules.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.get("/modules")
+async def list_modules(user=Depends(current_invigilator)):
+    return await db.modules.find({"owner_inv_id": user["inv_id"]}, {"_id": 0}).sort("created_at", -1).to_list(200)
+
+
+@api.get("/modules/{module_id}/students")
+async def list_module_students(module_id: str, user=Depends(current_invigilator)):
+    await _owned_module(module_id, user)
+    enrollments = await db.enrollments.find({"module_id": module_id}, {"_id": 0}).to_list(1000)
+    student_ids = [e["student_id"] for e in enrollments]
+    students = await db.students.find(
+        {"student_id": {"$in": student_ids}}, {"_id": 0, "password_hash": 0}
+    ).to_list(1000)
+    students_by_id = {s["student_id"]: s for s in students}
+    rows = []
+    for e in enrollments:
+        s = students_by_id.get(e["student_id"])
+        if s:
+            rows.append({"student_id": s["student_id"], "full_name": s["full_name"], "enrolled_at": e["enrolled_at"]})
+    return rows
+
+
+@api.get("/modules/{module_id}/students/history")
+async def module_student_history(module_id: str, student_id: str = Query(...), user=Depends(current_invigilator)):
+    """Every session this invigilator owns under this module where student_id
+    has a candidate record, most recent first — exam, answers, and grade."""
+    module = await _owned_module(module_id, user)
+    pattern = re.escape(module["code"])
+    sessions = await db.sessions.find(
+        {"owner_inv_id": user["inv_id"], "module_code": {"$regex": f"^{pattern}$", "$options": "i"}},
+        {"_id": 0},
+    ).to_list(500)
+    if not sessions:
+        return []
+    session_ids = [s["id"] for s in sessions]
+    sessions_by_id = {s["id"]: s for s in sessions}
+
+    candidates = await db.candidates.find(
+        {"session_id": {"$in": session_ids}, "student_id": student_id}, {"_id": 0}
+    ).to_list(200)
+    if not candidates:
+        return []
+    candidate_ids = [c["id"] for c in candidates]
+    answers = await db.answers.find({"candidate_id": {"$in": candidate_ids}}, {"_id": 0}).to_list(200)
+    grades = await db.grades.find({"candidate_id": {"$in": candidate_ids}}, {"_id": 0}).to_list(200)
+    answers_by_cid = {a["candidate_id"]: a for a in answers}
+    grades_by_cid = {g["candidate_id"]: g for g in grades}
+
+    rows = []
+    for c in candidates:
+        s = sessions_by_id.get(c["session_id"], {})
+        ans = answers_by_cid.get(c["id"])
+        rows.append({
+            "session_id": c["session_id"],
+            "exam_name": s.get("exam_name", ""),
+            "exam_code": s.get("exam_code", ""),
+            "module_code": s.get("module_code"),
+            "quiz_mode": s.get("quiz_mode", False),
+            "status": c["status"],
+            "joined_at": c.get("joined_at"),
+            "submitted_at": c.get("submitted_at"),
+            "questions": s.get("questions", []),
+            "answers": ans["answers"] if ans else {},
+            "grade": grades_by_cid.get(c["id"]),
+        })
+    rows.sort(key=lambda r: r.get("joined_at") or "", reverse=True)
+    return rows
+
+
+@api.delete("/modules/{module_id}/students")
+async def remove_module_student(module_id: str, student_id: str = Query(...), user=Depends(current_invigilator)):
+    # student_id is a query param, not a path segment: real IDs contain slashes
+    # (e.g. "EG/2023/1042"), which are fragile as a URL path segment across
+    # HTTP clients and proxies.
+    await _owned_module(module_id, user)
+    await db.enrollments.delete_one({"module_id": module_id, "student_id": student_id})
+    return {"ok": True}
+
+
+@api.post("/modules/{module_id}/students/reset-password")
+async def reset_module_student_password(module_id: str, student_id: str = Query(...), user=Depends(current_invigilator)):
+    await _owned_module(module_id, user)
+    enrollment = await db.enrollments.find_one({"module_id": module_id, "student_id": student_id})
+    if not enrollment:
+        raise HTTPException(404, "Student is not enrolled in this module")
+    new_password = secrets.token_urlsafe(9)
+    await db.students.update_one({"student_id": student_id}, {"$set": {"password_hash": hash_pw(new_password)}})
+    return {"student_id": student_id, "temp_password": new_password}
+
+
+@api.post("/student/auth/join", response_model=StudentTokenOut)
+async def student_join_module(body: StudentJoinModuleIn):
+    module = await db.modules.find_one({"enroll_code": body.enroll_code}, {"_id": 0})
+    if not module:
+        raise HTTPException(404, "Invalid enrollment code")
+
+    student = await db.students.find_one({"student_id": body.student_id})
+    if student:
+        if not verify_pw(body.password, student["password_hash"]):
+            raise HTTPException(401, "Invalid credentials")
+        full_name = student["full_name"]
+    else:
+        full_name = body.full_name.strip()
+        await db.students.insert_one({
+            "id": str(uuid.uuid4()),
+            "student_id": body.student_id,
+            "full_name": full_name,
+            "password_hash": hash_pw(body.password),
+            "created_at": now_iso(),
+        })
+
+    existing_enrollment = await db.enrollments.find_one(
+        {"student_id": body.student_id, "module_id": module["id"]}
+    )
+    if not existing_enrollment:
+        await db.enrollments.insert_one({
+            "id": str(uuid.uuid4()),
+            "student_id": body.student_id,
+            "module_id": module["id"],
+            "enrolled_at": now_iso(),
+        })
+
+    return StudentTokenOut(
+        token=make_token(body.student_id, "student"), student_id=body.student_id, full_name=full_name
+    )
+
+
+@api.post("/student/auth/login", response_model=StudentTokenOut)
+async def student_login(body: StudentLoginIn):
+    student = await db.students.find_one({"student_id": body.student_id})
+    if not student or not verify_pw(body.password, student["password_hash"]):
+        raise HTTPException(401, "Invalid credentials")
+    return StudentTokenOut(
+        token=make_token(student["student_id"], "student"),
+        student_id=student["student_id"],
+        full_name=student["full_name"],
+    )
+
+
+@api.get("/student/me")
+async def student_me(user=Depends(current_student)):
+    enrollments = await db.enrollments.find({"student_id": user["student_id"]}, {"_id": 0}).to_list(200)
+    module_ids = [e["module_id"] for e in enrollments]
+    modules = await db.modules.find(
+        {"id": {"$in": module_ids}}, {"_id": 0, "id": 1, "code": 1, "name": 1}
+    ).to_list(200)
+    return {"student_id": user["student_id"], "full_name": user["full_name"], "modules": modules}
+
+
+@api.get("/student/modules/{code}/quizzes")
+async def student_module_quizzes(code: str, user=Depends(current_student)):
+    # Scoped to the student's own enrollments so a `code` that happens to collide
+    # across two different invigilators' modules can never resolve to the wrong one.
+    pattern = re.escape(code.upper())
+    enrollments = await db.enrollments.find({"student_id": user["student_id"]}, {"_id": 0}).to_list(200)
+    module_ids = [e["module_id"] for e in enrollments]
+    module = await db.modules.find_one(
+        {"id": {"$in": module_ids}, "code": {"$regex": f"^{pattern}$", "$options": "i"}},
+        {"_id": 0, "id": 1},
+    )
+    if not module:
+        raise HTTPException(403, "Not enrolled in this module")
+    return await db.sessions.find(
+        {
+            "quiz_mode": True,
+            "published": True,
+            "module_code": {"$regex": f"^{pattern}$", "$options": "i"},
+        },
+        {"_id": 0, "model_answers": 0, "questions": 0, "whitelisted_urls": 0},
+    ).sort("created_at", -1).to_list(50)
 
 
 # ---- Sessions ----
@@ -1964,6 +2241,61 @@ async def session_report(sid: str, user=Depends(current_invigilator)):
     }
 
 
+def build_grading_items(
+    answers: List[Dict[str, Any]],
+    model_ans: Dict[str, str],
+    marks_map: Dict[str, float],
+    type_map: Dict[str, str],
+    text_map: Dict[str, str],
+) -> Tuple[List[Dict[str, Any]], List[Tuple[str, str, float]]]:
+    """Flattens (candidate, question) pairs into RAGGrader.evaluate_many items, plus a
+    parallel index_map of (candidate_id, question_id, max_marks) to regroup results with."""
+    items: List[Dict[str, Any]] = []
+    index_map: List[Tuple[str, str, float]] = []
+    for a in answers:
+        for q_id, model_text in model_ans.items():
+            q_max = marks_map.get(q_id, 10.0)
+            items.append({
+                "question_id": q_id,
+                "question_text": text_map.get(q_id, ""),
+                "model_answer": model_text,
+                "student_answer": a["answers"].get(q_id, ""),
+                "max_marks": q_max,
+                "question_type": type_map.get(q_id, "text"),
+            })
+            index_map.append((a["candidate_id"], q_id, q_max))
+    return items, index_map
+
+
+def assemble_grade_docs(
+    sid: str,
+    index_map: List[Tuple[str, str, float]],
+    results: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Regroups flat evaluate_many results (in index_map order) back into one grade
+    document per candidate."""
+    per_candidate: Dict[str, Dict[str, Any]] = {}
+    for (candidate_id, q_id, q_max), eval_res in zip(index_map, results):
+        bucket = per_candidate.setdefault(candidate_id, {"per_question": {}, "total": 0.0, "max_total": 0.0})
+        bucket["per_question"][q_id] = eval_res
+        bucket["total"] += eval_res["score"]
+        bucket["max_total"] += q_max
+
+    docs = []
+    for candidate_id, bucket in per_candidate.items():
+        docs.append({
+            "id": str(uuid.uuid4()),
+            "session_id": sid,
+            "candidate_id": candidate_id,
+            "per_question": bucket["per_question"],
+            "total": round(bucket["total"], 2),
+            "max_total": round(bucket["max_total"], 2),
+            "graded_at": now_iso(),
+            "rag_graded": True,
+        })
+    return docs
+
+
 @api.post("/sessions/{sid}/grade")
 async def grade_session(sid: str, user=Depends(current_invigilator)):
     s = await db.sessions.find_one({"id": sid, "owner_inv_id": user["inv_id"]}, {"_id": 0})
@@ -2007,46 +2339,16 @@ async def grade_session(sid: str, user=Depends(current_invigilator)):
         gemini_key=GEMINI_API_KEY,
     )
 
-    results = []
-    for a in answers:
-        per_q: Dict[str, Any] = {}
-        total = 0.0
-        max_total = 0.0
-        for q_id, model_text in model_ans.items():
-            student_text = a["answers"].get(q_id, "")
-            q_max = marks_map.get(q_id, 10.0)
-            q_type = type_map.get(q_id, "text")
-            q_text = text_map.get(q_id, "")
+    items, index_map = build_grading_items(answers, model_ans, marks_map, type_map, text_map)
+    eval_results = await grader.evaluate_many(items, concurrency=GRADING_CONCURRENCY)
+    grade_docs = assemble_grade_docs(sid, index_map, eval_results)
 
-            eval_res = await grader.evaluate_answer(
-                question_id=q_id,
-                question_text=q_text,
-                model_answer=model_text,
-                student_answer=student_text,
-                max_marks=q_max,
-                question_type=q_type,
-            )
-
-            per_q[q_id] = eval_res
-            total += eval_res["score"]
-            max_total += q_max
-
-        grade_doc = {
-            "id": str(uuid.uuid4()),
-            "session_id": sid,
-            "candidate_id": a["candidate_id"],
-            "per_question": per_q,
-            "total": round(total, 2),
-            "max_total": round(max_total, 2),
-            "graded_at": now_iso(),
-            "rag_graded": True,
-        }
+    for grade_doc in grade_docs:
         await db.grades.replace_one(
-            {"session_id": sid, "candidate_id": a["candidate_id"]}, grade_doc, upsert=True
+            {"session_id": sid, "candidate_id": grade_doc["candidate_id"]}, grade_doc, upsert=True
         )
         grade_doc.pop("_id", None)
-        results.append(grade_doc)
-    return {"ok": True, "graded": len(results), "results": results}
+    return {"ok": True, "graded": len(grade_docs), "results": grade_docs}
 
 
 @api.put("/sessions/{sid}/grade/{candidate_id}")
@@ -2209,6 +2511,9 @@ async def reset_test_data():
     await db.grades.delete_many({})
     await db.live_frames.delete_many({})
     await db.access_requests.delete_many({})
+    await db.modules.delete_many({})
+    await db.students.delete_many({})
+    await db.enrollments.delete_many({})
     return {"status": "reset_complete"}
 
 

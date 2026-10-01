@@ -31,6 +31,7 @@ export function buildQuickSessionPayload(form = {}, now = Date.now()) {
   const whitelistedUrls = Array.isArray(form.whitelistedUrls)
     ? form.whitelistedUrls.map((url) => String(url).trim()).filter(Boolean)
     : [];
+  const moduleCode = String(form.moduleCode || "").trim().toUpperCase();
 
   return {
     exam_name: examName,
@@ -45,8 +46,11 @@ export function buildQuickSessionPayload(form = {}, now = Date.now()) {
     whitelisted_apps: [],
     questions: [{ id: "q1", type: "text", text: questionText, marks: 10, options: [] }],
     model_answers: { q1: modelAnswer },
-    quiz_mode: false,
-    published: false,
+    quiz_mode: Boolean(moduleCode),
+    published: Boolean(moduleCode),
+    module_code: moduleCode,
+    quiz_prompt_title: moduleCode ? "Quick quiz available now" : "",
+    quiz_prompt_body: moduleCode ? "A quick assessment is available for this module." : "",
     lockdown_mode: "extension_required",
     require_manual_approval: false,
     require_identity_verification: false,
@@ -71,4 +75,32 @@ export function validateLoginForm(form = {}) {
   if (!invId) throw new TypeError("Invigilator ID is required");
   if (!password) throw new TypeError("Password is required");
   return { invId, password };
+}
+
+export function validateModuleCreateForm(form = {}) {
+  const code = String(form.code || "").trim().toUpperCase();
+  const name = String(form.name || "").trim();
+  if (!code) throw new TypeError("Module code is required");
+  if (!name) throw new TypeError("Module name is required");
+  return { code, name };
+}
+
+export function validateModuleEnrollForm(form = {}) {
+  const enrollCode = String(form.enrollCode || "").trim().toUpperCase();
+  const studentId = String(form.studentId || "").trim();
+  const fullName = String(form.fullName || "").trim();
+  const password = String(form.password || "");
+  if (!enrollCode) throw new TypeError("Enrollment code is required");
+  if (!studentId) throw new TypeError("Student ID is required");
+  if (!fullName) throw new TypeError("Full name is required");
+  if (!password) throw new TypeError("Password is required");
+  return { enrollCode, studentId, fullName, password };
+}
+
+export function validateStudentLoginForm(form = {}) {
+  const studentId = String(form.studentId || "").trim();
+  const password = String(form.password || "");
+  if (!studentId) throw new TypeError("Student ID is required");
+  if (!password) throw new TypeError("Password is required");
+  return { studentId, password };
 }

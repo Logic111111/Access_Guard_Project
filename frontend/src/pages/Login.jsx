@@ -5,31 +5,46 @@ import { api, setToken, setUser } from "../lib/api";
 import { Eye, EyeOff, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 
+// Secrets passed in the URL are development conveniences only; production
+// builds never pre-fill them. No password is pre-filled even in dev: there is
+// no fixed invigilator credential in this codebase anymore (see backend's
+// resolve_admin_password / POST /api/test/seed) to safely hardcode here.
+const IS_DEV_BUILD = process.env.NODE_ENV !== "production";
+const DEV_DEFAULTS = IS_DEV_BUILD
+  ? { invId: "INV0001", password: "", remoteToken: "" }
+  : { invId: "", password: "", remoteToken: "" };
+
 export default function Login() {
   const nav = useNavigate();
   const location = useLocation();
-  const [invId, setInvId] = useState("EG/STAFF/0001");
-  const [pw, setPw] = useState("AccessGuard2026!");
-  const [otp, setOtp] = useState(["", "", "", "", "", ""]);
+  const [invId, setInvId] = useState(DEV_DEFAULTS.invId);
+  const [pw, setPw] = useState(DEV_DEFAULTS.password);
   const [show, setShow] = useState(false);
   const [loading, setLoading] = useState(false);
   const [loginMethod, setLoginMethod] = useState("password");
-  const [remoteToken, setRemoteToken] = useState("remote-access-2026");
+  const [remoteToken, setRemoteToken] = useState(DEV_DEFAULTS.remoteToken);
   const [networkAuth, setNetworkAuth] = useState(null);
-  const [requesting2fa, setRequesting2fa] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
-    const queryInvId = params.get("inv_id") || params.get("invId") || params.get("invigilator") || invId;
-    const queryMethod = params.get("login_method") || params.get("method") || loginMethod;
-    const queryPassword = params.get("password") || "";
-    const queryRemoteToken = params.get("remote_token") || params.get("token") || remoteToken;
+    const queryInvId = params.get("inv_id") || params.get("invId") || params.get("invigilator");
+    const queryMethod = params.get("login_method") || params.get("method");
 
-    setInvId(queryInvId);
-    setLoginMethod(queryMethod);
+    if (queryInvId) setInvId(queryInvId);
+    if (queryMethod) setLoginMethod(queryMethod);
+    if (!IS_DEV_BUILD) return;
+    const queryPassword = params.get("password");
+    const queryRemoteToken = params.get("remote_token") || params.get("token");
     if (queryPassword) setPw(queryPassword);
     if (queryRemoteToken) setRemoteToken(queryRemoteToken);
   }, [location.search]);
+
+  useEffect(() => {
+    if (sessionStorage.getItem("ag_session_expired")) {
+      sessionStorage.removeItem("ag_session_expired");
+      toast.error("Your session expired. Please sign in again.");
+    }
+  }, []);
 
   useEffect(() => {
     const onNetAuth = (e) => {
@@ -40,24 +55,16 @@ export default function Login() {
     return () => window.removeEventListener('network-authentication-required', onNetAuth);
   }, []);
 
-  const setOtpAt = (i, v) => {
-    if (!/^[0-9]?$/.test(v)) return;
-    const arr = [...otp]; arr[i] = v; setOtp(arr);
-    if (v && i < 5) document.getElementById(`otp-${i + 1}`)?.focus();
-  };
-
   const submit = async (e) => {
     e.preventDefault();
     setLoading(true);
     try {
-      const code = otp.join("");
       const payload = {
         inv_id: invId,
         login_method: loginMethod,
       };
       if (loginMethod === "password") {
         payload.password = pw;
-        payload.two_factor = code.length === 6 ? code : "000000";
       } else if (loginMethod === "remote_token") {
         payload.remote_token = remoteToken;
       }
@@ -69,16 +76,6 @@ export default function Login() {
     } catch (err) {
       toast.error(err?.response?.data?.detail || "Login failed");
     } finally { setLoading(false); }
-  };
-
-  const request2fa = async () => {
-    setRequesting2fa(true);
-    try {
-      const { data } = await api.post("/auth/request-2fa", { inv_id: invId });
-      toast.success(`2FA code (test): ${data.code}`);
-    } catch (err) {
-      toast.error(err?.response?.data?.detail || "Failed to request 2FA");
-    } finally { setRequesting2fa(false); }
   };
 
   return (
@@ -120,7 +117,7 @@ export default function Login() {
                 className={`btn-outline py-2 rounded ${loginMethod === "password" ? "border-cyan text-cyan" : "text-white/70"}`}
                 onClick={() => setLoginMethod("password")}
               >
-                Password + 2FA
+                Password
               </button>
               <button
                 type="button"
@@ -143,53 +140,27 @@ export default function Login() {
                 onChange={(e) => setRemoteToken(e.target.value)}
               />
               <div className="text-xs text-white/40 mt-1 font-mono">
-                Use the shared remote login token. This bypasses password/2FA for trusted remote access.
+                Use the shared remote login token for trusted remote access.
               </div>
             </div>
           ) : null}
           {loginMethod === "password" ? (
-            <>
-              <div>
-                <label className="label-mono">Password</label>
-                <div className="relative">
-                  <input
-                    data-testid="login-password-input"
-                    className="input-hud mt-1 pr-10"
-                    type={show ? "text" : "password"}
-                    value={pw} onChange={(e) => setPw(e.target.value)}
-                  />
-                  <button type="button" onClick={() => setShow(s => !s)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-cyan/70 hover:text-cyan"
-                    data-testid="toggle-password-btn">
-                    {show ? <EyeOff size={16} /> : <Eye size={16} />}
-                  </button>
-                </div>
+            <div>
+              <label className="label-mono">Password</label>
+              <div className="relative">
+                <input
+                  data-testid="login-password-input"
+                  className="input-hud mt-1 pr-10"
+                  type={show ? "text" : "password"}
+                  value={pw} onChange={(e) => setPw(e.target.value)}
+                />
+                <button type="button" onClick={() => setShow(s => !s)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-cyan/70 hover:text-cyan"
+                  data-testid="toggle-password-btn">
+                  {show ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
               </div>
-              <div>
-                <label className="label-mono">Two-Factor Code</label>
-                <div className="flex gap-2 mt-1">
-                  {otp.map((v, i) => (
-                    <input
-                      key={i}
-                      id={`otp-${i}`}
-                      data-testid={`otp-input-${i}`}
-                      value={v}
-                      onChange={(e) => setOtpAt(i, e.target.value)}
-                      maxLength={1}
-                      className="input-hud text-center text-lg w-12 px-0"
-                    />
-                  ))}
-                </div>
-                <div className="text-xs text-white/40 mt-1 font-mono">Demo: any 6 digits</div>
-                <div className="mt-2 flex items-center gap-2">
-                  <button type="button" onClick={request2fa} disabled={requesting2fa}
-                    className="btn-outline px-3 py-1 rounded">
-                    {requesting2fa ? "Requesting…" : "Request 2FA Code"}
-                  </button>
-                  <div className="text-xs text-white/50">The code is returned in the response for testing purposes.</div>
-                </div>
-              </div>
-            </>
+            </div>
           ) : null}
           <button
             type="submit"

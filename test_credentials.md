@@ -1,8 +1,8 @@
 ﻿# AccessGuard - Test Mode Credentials
 
 ## Invigilator Login
-- **ID:** EG/STAFF/0001
-- **Password:** AccessGuard2026!
+- **ID:** INV0001
+- **Password:** Password123!
 - **URL:** http://localhost:3000/login
 
 ## Student Access
