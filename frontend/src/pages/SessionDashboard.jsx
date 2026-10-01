@@ -1,9 +1,9 @@
-import React, { useEffect, useState, useMemo, useRef } from "react";
+import React, { useCallback, useEffect, useState, useMemo, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import AppShell from "../components/AppShell";
 import Sparkline from "../components/Sparkline";
-import { api, getToken, BACKEND_URL } from "../lib/api";
-import { Activity, AlertTriangle, HeartPulse, ShieldCheck, Search, Check, X, Eye, FileText, Brain, StopCircle, PlayCircle, Wifi, WifiOff, UserX } from "lucide-react";
+import { api, getToken, BACKEND_URL, getWebSocketUrl } from "../lib/api";
+import { Activity, AlertTriangle, HeartPulse, ShieldCheck, Search, Check, X, Eye, FileText, Brain, StopCircle, PlayCircle, Wifi, WifiOff, UserX, LockKeyhole, RotateCcw, Globe2 } from "lucide-react";
 import { toast } from "sonner";
 
 const resolveImg = (val) => {
@@ -26,36 +26,39 @@ export default function SessionDashboard() {
   const [hbs, setHbs] = useState([]);
   const [vios, setVios] = useState([]);
   const [frames, setFrames] = useState({});
+  const [accessRequests, setAccessRequests] = useState([]);
   const [search, setSearch] = useState("");
   const [wsConnected, setWsConnected] = useState(false);
   const wsRef = useRef(null);
 
-  const refresh = async () => {
-    const [s, c, h, v, f] = await Promise.all([
+  const refresh = useCallback(async () => {
+    const [s, c, h, v, f, requests] = await Promise.all([
       api.get(`/sessions/${sid}`),
       api.get(`/sessions/${sid}/candidates`),
       api.get(`/sessions/${sid}/heartbeats`),
       api.get(`/sessions/${sid}/violations`),
       api.get(`/sessions/${sid}/frames`),
+      api.get(`/sessions/${sid}/access-requests`).catch(() => ({ data: [] })),
     ]);
-    setSession(s.data); setCands(c.data); setHbs(h.data); setVios(v.data); setFrames(f.data);
-  };
+    setSession(s.data); setCands(c.data); setHbs(h.data); setVios(v.data); setFrames(f.data); setAccessRequests(requests.data);
+  }, [sid]);
 
   // Initial fetch + periodic safety refresh (every 30s) — WebSocket carries live deltas
   useEffect(() => {
     refresh();
     const t = setInterval(refresh, 30000);
     return () => clearInterval(t);
-  }, [sid]);
+  }, [refresh]);
 
   // WebSocket live channel
   useEffect(() => {
     const tok = getToken();
     if (!tok) return;
-    const wsUrl = BACKEND_URL.replace(/^http/, "ws") + `/api/ws/sessions/${sid}/live?token=${encodeURIComponent(tok)}`;
+    const wsUrl = new URL(getWebSocketUrl(`/api/ws/sessions/${sid}/live`));
+    wsUrl.searchParams.set("token", tok);
     let keepalive;
     const open = () => {
-      const ws = new WebSocket(wsUrl);
+      const ws = new WebSocket(wsUrl.toString());
       wsRef.current = ws;
       ws.onopen = () => {
         setWsConnected(true);
@@ -69,11 +72,16 @@ export default function SessionDashboard() {
           setCands(prev => prev.find(c => c.id === evt.candidate.id) ? prev : [...prev, evt.candidate]);
         } else if (evt.type === "candidate_decision") {
           setCands(prev => prev.map(c => c.id === evt.candidate_id ? { ...c, status: evt.status } : c));
+        } else if (evt.type === "candidate_exited") {
+          setCands(prev => prev.map(c => c.id === evt.candidate_id ? { ...c, status: "exited" } : c));
+          toast.warning("A student exited the quiz session.");
         } else if (evt.type === "violation") {
           setVios(prev => [{ id: evt.candidate_id + evt.ts, candidate_id: evt.candidate_id, kind: evt.kind, detail: evt.detail, ts: evt.ts }, ...prev]);
           if (evt.locked) {
             setCands(prev => prev.map(c => c.id === evt.candidate_id ? { ...c, status: "locked" } : c));
           }
+        } else if (["access_request", "access_request_created", "access_request_decided", "policy_updated", "candidate_locked", "candidate_resumed"].includes(evt.type)) {
+          refresh().catch(() => {});
         }
       };
       ws.onclose = () => {
@@ -91,7 +99,7 @@ export default function SessionDashboard() {
       wsRef.current = null;
       try { ws && ws.close(); } catch {}
     };
-  }, [sid]);
+  }, [refresh, sid]);
 
   const decide = async (cid, approve) => {
     try {
@@ -110,8 +118,47 @@ export default function SessionDashboard() {
     } catch (e) { toast.error("Failed to kick student"); }
   };
 
-  const start = async () => { await api.post(`/sessions/${sid}/start`); toast.success("Session started"); refresh(); };
-  const end = async () => { await api.post(`/sessions/${sid}/end`); toast.success("Session ended"); refresh(); };
+  const controlCandidate = async (cid, action) => {
+    try {
+      await api.post(`/sessions/${sid}/candidates/${cid}/${action}`, {
+        reason: action === "lock" ? "Paused by invigilator" : "Resumed by invigilator",
+      });
+      toast.success(action === "lock" ? "Student attempt paused" : "Student attempt resumed");
+      refresh();
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || `Failed to ${action} student`);
+    }
+  };
+
+  const decideAccessRequest = async (requestId, approve) => {
+    try {
+      await api.post(`/sessions/${sid}/access-requests/${requestId}/decision`, { approve });
+      toast.success(approve ? "Website allowed for this session" : "Website request denied");
+      refresh();
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || "Failed to update website access");
+    }
+  };
+
+  const start = async () => {
+    try { await api.post(`/sessions/${sid}/start`); toast.success("Session started"); refresh(); }
+    catch (error) { toast.error(error?.response?.data?.detail || "Failed to start session"); }
+  };
+  const end = async () => {
+    if (!window.confirm("End this exam and release browser lockdown for all students?")) return;
+    try { await api.post(`/sessions/${sid}/end`); toast.success("Session ended and release issued"); refresh(); }
+    catch (error) { toast.error(error?.response?.data?.detail || "Failed to end session"); }
+  };
+  const deleteSession = async () => {
+    if (!window.confirm("Are you sure you want to delete this entire session and all student records? This action cannot be undone.")) return;
+    try {
+      await api.delete(`/sessions/${sid}`);
+      toast.success("Session deleted successfully");
+      nav("/sessions");
+    } catch (e) {
+      toast.error("Failed to delete session");
+    }
+  };
 
   const filtered = useMemo(
     () => cands.filter(c =>
@@ -161,6 +208,10 @@ export default function SessionDashboard() {
           )}
           <button data-testid="report-btn" onClick={() => nav(`/sessions/${sid}/report`)}
             className="btn-ghost-cyan rounded-full px-4 py-2 flex items-center gap-2"><FileText size={16}/> Report</button>
+          <button data-testid="delete-session-btn" onClick={deleteSession}
+            className="btn-ghost-violet rounded-full px-4 py-2 flex items-center gap-2 text-violation hover:bg-violation/20">
+            🗑 Delete Session
+          </button>
         </div>
       </div>
 
@@ -205,6 +256,32 @@ export default function SessionDashboard() {
         </div>
       )}
 
+      {accessRequests.some(request => request.status === "pending") && (
+        <div className="glass rounded-xl p-5 mb-6 border border-warning/30" data-testid="access-request-section">
+          <div className="label-mono mb-3 text-warning flex items-center gap-2"><Globe2 size={14} /> WEBSITE ACCESS REQUESTS</div>
+          <div className="space-y-3">
+            {accessRequests.filter(request => request.status === "pending").map(request => {
+              const candidate = cands.find(c => c.id === request.candidate_id);
+              return (
+                <div key={request.id} className="glass rounded-lg p-4 flex gap-4 items-center flex-wrap" data-testid={`access-request-${request.id}`}>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium">{candidate?.full_name || request.candidate_id}</div>
+                    <div className="font-mono text-xs text-cyan break-all mt-1">{request.requested_url || request.url}</div>
+                    {request.reason && <div className="text-xs text-white/55 mt-1">Reason: {request.reason}</div>}
+                  </div>
+                  <button onClick={() => decideAccessRequest(request.id, true)} className="btn-cyan rounded-lg px-3 py-2 text-xs flex items-center gap-1">
+                    <Check size={13} /> Allow
+                  </button>
+                  <button onClick={() => decideAccessRequest(request.id, false)} className="btn-ghost-violet rounded-lg px-3 py-2 text-xs flex items-center gap-1">
+                    <X size={13} /> Deny
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Live grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5" data-testid="candidates-grid">
         {filtered.length === 0 && (
@@ -237,6 +314,16 @@ export default function SessionDashboard() {
                   {statusLabel}
                 </div>
                 <div className="absolute top-2 right-2 flex gap-1">
+                  {c.status === "approved" && (
+                    <button className="p-1.5 bg-warning/80 text-void rounded hover:bg-warning" data-testid={`lock-${c.id}`} title="Pause and lock attempt" onClick={() => controlCandidate(c.id, "lock")}>
+                      <LockKeyhole size={12} />
+                    </button>
+                  )}
+                  {c.status === "locked" && (
+                    <button className="p-1.5 bg-online/80 text-void rounded hover:bg-online" data-testid={`resume-${c.id}`} title="Resume attempt" onClick={() => controlCandidate(c.id, "resume")}>
+                      <RotateCcw size={12} />
+                    </button>
+                  )}
                   {c.status !== "kicked" && (
                     <button className="p-1.5 bg-violation/80 text-white rounded hover:bg-violation" data-testid={`kick-${c.id}`} title="Kick Student" onClick={() => kickCandidate(c.id)}>
                       <UserX size={12} />
@@ -252,6 +339,9 @@ export default function SessionDashboard() {
                   <div>
                     <div className="font-medium text-sm">{c.full_name}</div>
                     <div className="font-mono text-[11px] text-white/50">ID {c.student_id}</div>
+                    <div className={`font-mono text-[10px] mt-1 ${c.extension_active ? "text-online" : "text-warning"}`}>
+                      {c.extension_active ? `EXT ${c.extension_version || "CONNECTED"}` : "EXT NOT CONFIRMED"}
+                    </div>
                   </div>
                   <div className="w-20 h-8">
                     <Sparkline data={cHb.slice(0,15).map(h=>h.latency_ms||30).reverse()} color={statusColor.includes("violation")?"#FF3D71":statusColor.includes("warning")?"#FFB020":"#00E5FF"} height={32} />

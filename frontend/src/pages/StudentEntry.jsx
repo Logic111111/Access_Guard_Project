@@ -116,12 +116,21 @@ export default function StudentEntry() {
     const normalizedCode = String(sessionCode || "").trim().toUpperCase();
     if (!normalizedCode) return;
     setLoading(true);
-    if (recovery) {
+
+    const recoveredCode = String(recovery?.session?.session_code || "").trim().toUpperCase();
+    if (recovery && recoveredCode === normalizedCode) {
       const recoveryResult = await resumeExistingAttempt();
       if (recoveryResult !== "cleared") {
         setLoading(false);
         return;
       }
+    } else if (recovery) {
+      // A different exam is being requested — e.g. a notification or link for
+      // a brand-new quiz — so the cached attempt is no longer relevant and
+      // must not silently redirect into it (or overwrite this student's
+      // identity with the old attempt's).
+      clearStudentAttempt();
+      setRecovery(null);
     }
 
     try {

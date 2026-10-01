@@ -20,8 +20,12 @@ export default function CreateSession() {
     allow_pause: true,
     auto_record_webcam: true,
     save_screen_share: true,
-    whitelisted_urls: ["docs.python.org"],
-    whitelisted_apps: ["Calculator"],
+    lockdown_mode: "extension_required",
+    require_manual_approval: true,
+    require_fullscreen: true,
+    extension_min_version: "1.0.0",
+    whitelisted_urls: [],
+    whitelisted_apps: [],
     questions: [
       { id: "q1", type: "text", text: "Define modular software design and its benefits.", marks: 10, options: [] },
       { id: "q2", type: "text", text: "Compare REST and GraphQL APIs.", marks: 10, options: [] },
@@ -201,6 +205,33 @@ export default function CreateSession() {
                 </label>
               ))}
             </div>
+            <div className="glass rounded-xl p-4 border border-cyan/20 space-y-3">
+              <div>
+                <label className="label-mono">Browser Security Mode</label>
+                <select
+                  data-testid="lockdown-mode-select"
+                  className="input-hud mt-1"
+                  value={form.lockdown_mode}
+                  onChange={e => upd("lockdown_mode", e.target.value)}
+                >
+                  <option value="extension_required">Extension-enforced lockdown</option>
+                  <option value="monitor_only">Browser-only lockdown (no extension)</option>
+                </select>
+              </div>
+              <p className="text-xs text-white/55">
+                Extension mode also blocks non-approved websites and extra browser tabs at the browser level. Browser-only mode locks the exam behind fullscreen and a best-effort keyboard lock, with full activity monitoring — but it cannot stop a student from switching to another already-open application. Full device lockdown in either mode additionally requires a managed Chrome/ChromeOS kiosk policy.
+              </p>
+              <div className="flex flex-wrap gap-6">
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked disabled className="accent-cyan w-4 h-4" />
+                  Invigilator approval required
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer text-sm">
+                  <input data-testid="toggle-require-fullscreen" type="checkbox" checked={form.require_fullscreen} onChange={e => upd("require_fullscreen", e.target.checked)} className="accent-cyan w-4 h-4" />
+                  Require fullscreen
+                </label>
+              </div>
+            </div>
           </div>
         )}
 
@@ -305,7 +336,7 @@ export default function CreateSession() {
               onChange={v => upd("whitelisted_apps", v)}
               placeholder="Calculator" testid="apps" />
             <div className="text-xs text-white/50 font-mono pt-2">
-              Anything outside this whitelist will instantly lock the candidate's exam.
+              The extension blocks browser navigation outside the approved URL origins. Application names are monitoring notes only unless the exam device is managed by an OS/kiosk policy.
             </div>
           </div>
         )}
@@ -348,6 +379,7 @@ export default function CreateSession() {
               <div><span className="label-mono">QUESTIONS</span><div>{form.questions.length}</div></div>
               <div><span className="label-mono">URLS</span><div>{form.whitelisted_urls.length}</div></div>
               <div><span className="label-mono">APPS</span><div>{form.whitelisted_apps.length}</div></div>
+              <div><span className="label-mono">SECURITY</span><div>{form.lockdown_mode === "extension_required" ? "EXTENSION" : "MONITOR"}</div></div>
             </div>
             {created && (
               <div className="glass glass-violet rounded-lg p-5 text-center" data-testid="session-launched">

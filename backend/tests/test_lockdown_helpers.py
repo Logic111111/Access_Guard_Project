@@ -262,6 +262,38 @@ def test_seconds_remaining_uses_server_start_time():
     assert seconds_remaining(_session(), now=now + timedelta(hours=2)) == 0
 
 
+def test_extension_policy_releases_once_session_duration_elapses():
+    # No invigilator is required to click "End Session" for this — an unattended
+    # quick/module quiz must still let the extension release itself once the
+    # exam's own duration_minutes has run out.
+    policy = build_extension_policy(
+        _candidate(status="approved"),
+        _session(started_at="2026-08-03T08:00:00+00:00", duration_minutes=60),
+        generated_at="2026-08-03T09:01:00+00:00",  # 61 minutes later
+    )
+    assert policy["state"] == "finished"
+    assert policy["enforcement"] is False
+
+
+def test_extension_policy_still_enforces_right_up_to_the_duration_boundary():
+    policy = build_extension_policy(
+        _candidate(status="approved"),
+        _session(started_at="2026-08-03T08:00:00+00:00", duration_minutes=60),
+        generated_at="2026-08-03T08:59:00+00:00",  # 59 minutes later, still in window
+    )
+    assert policy["state"] == "enforced"
+    assert policy["enforcement"] is True
+
+
+def test_extension_policy_releases_a_locked_candidate_too_once_expired():
+    policy = build_extension_policy(
+        _candidate(status="locked"),
+        _session(started_at="2026-08-03T08:00:00+00:00", duration_minutes=60),
+        generated_at="2026-08-03T09:01:00+00:00",
+    )
+    assert policy["state"] == "finished"
+
+
 def test_by_code_exposes_identity_verification_flag(monkeypatch):
     session = _session(session_code="QUIK-ABCD-EFGH", require_identity_verification=False)
 

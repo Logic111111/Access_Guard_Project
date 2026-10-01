@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Navigation blocked · AccessGuard</title>
+    <link rel="stylesheet" href="ui.css">
+  </head>
+  <body class="blocked-page">
+    <main class="panel" aria-labelledby="blocked-title">
+      <p class="eyebrow">AccessGuard secure session</p>
+      <h1 id="blocked-title">This navigation is not allowed</h1>
+      <p class="lede">
+        The current invigilator policy does not include this destination. The page was stopped before it could load.
+      </p>
+
+      <section class="attempt" aria-label="Blocked destination">
+        <span class="label">Attempted destination</span>
+        <code id="attempted-url">Unknown destination</code>
+      </section>
+
+      <div id="lockdown-status" class="status-pill">Checking lockdown policy</div>
+
+      <div class="actions">
+        <button id="request-access" type="button">Request invigilator access</button>
+        <button id="return-exam" class="secondary" type="button">Return to exam</button>
+      </div>
+
+      <p id="notice" class="notice" role="status" aria-live="polite"></p>
+      <p class="fine-print">
+        Approval is never granted by this page. Access becomes available only after the authenticated backend reports an updated invigilator policy.
+      </p>
+    </main>
+    <script src="blocked.js"></script>
+  </body>
+</html>

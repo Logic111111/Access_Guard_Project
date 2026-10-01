@@ -12,4 +12,4 @@ test("renders home page with invigilator and student selection", () => {
   expect(heading).toBeInTheDocument();
   expect(invigilatorButton).toBeInTheDocument();
   expect(studentButton).toBeInTheDocument();
-});
+});6

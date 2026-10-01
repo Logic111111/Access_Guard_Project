@@ -13,7 +13,14 @@ import {
   normalizePolicy,
   sanitizeAttemptedUrl,
 } from "./rule-helpers.js";
-import { buildQuickSessionPayload, validateJoinForm, validateLoginForm } from "./quick-session.js";
+import {
+  buildQuickSessionPayload,
+  validateJoinForm,
+  validateLoginForm,
+  validateModuleCreateForm,
+  validateModuleEnrollForm,
+  validateStudentLoginForm,
+} from "./quick-session.js";
 import {
   ACCESS_REQUEST_PATH,
   ACTIVE_QUICK_SESSION_STORAGE_KEY,
@@ -26,12 +33,20 @@ import {
   HEARTBEAT_PATH,
   INVIGILATOR_AUTH_STORAGE_KEY,
   MAX_ALLOWED_ORIGINS,
+  MODULE_AUTH_STORAGE_KEY,
+  MODULES_PATH,
   POLICY_ALARM,
   POLICY_PATH,
   POLICY_REFRESH_MINUTES,
   PROTOCOL_VERSION,
+  QUIZ_POLL_ALARM,
+  QUIZ_POLL_MINUTES,
   RUNTIME_STORAGE_KEY,
   SESSIONS_PATH,
+  STUDENT_JOIN_PATH,
+  STUDENT_LOGIN_PATH,
+  STUDENT_ME_PATH,
+  STUDENT_MODULES_PATH,
 } from "./config.js";
 
 const BRIDGE_SCOPE = "accessguard-content-bridge";
@@ -308,7 +323,7 @@ async function configureDeployment(appUrl) {
   return writeDeployment({ appOrigin, apiBase, managed: trust.managed });
 }
 
-function invigilatorHeaders(token, hasBody = false) {
+function bearerHeaders(token, hasBody = false) {
   return {
     Accept: "application/json",
     ...(hasBody ? { "Content-Type": "application/json" } : {}),
@@ -384,14 +399,14 @@ async function createQuickSession(form) {
 
   const createResponse = await fetchWithTimeout(endpointUrl(deployment.apiBase, SESSIONS_PATH), {
     method: "POST",
-    headers: invigilatorHeaders(auth.token, true),
+    headers: bearerHeaders(auth.token, true),
     body: JSON.stringify(payload),
   });
   const session = await readJsonResponse(createResponse, "quick_session_create_failed");
 
   const startResponse = await fetchWithTimeout(endpointUrl(deployment.apiBase, `${SESSIONS_PATH}/${session.id}/start`), {
     method: "POST",
-    headers: invigilatorHeaders(auth.token, false),
+    headers: bearerHeaders(auth.token, false),
   });
   await readJsonResponse(startResponse, "quick_session_start_failed");
 
@@ -406,12 +421,225 @@ async function endQuickSession() {
 
   const response = await fetchWithTimeout(endpointUrl(deployment.apiBase, `${SESSIONS_PATH}/${active.sessionId}/end`), {
     method: "POST",
-    headers: invigilatorHeaders(auth.token, false),
+    headers: bearerHeaders(auth.token, false),
   });
   await readJsonResponse(response, "quick_session_end_failed");
   await clearActiveQuickSession();
   return { ended: true };
 }
+
+// ---- Module enrollment (invigilator side: create/list modules) ----
+
+async function createModule({ code, name }) {
+  const { deployment, auth } = await requireInvigilatorContext();
+  const payload = validateModuleCreateForm({ code, name });
+  const response = await fetchWithTimeout(endpointUrl(deployment.apiBase, MODULES_PATH), {
+    method: "POST",
+    headers: bearerHeaders(auth.token, true),
+    body: JSON.stringify(payload),
+  });
+  return readJsonResponse(response, "module_create_failed");
+}
+
+async function listModules() {
+  const { deployment, auth } = await requireInvigilatorContext();
+  const response = await fetchWithTimeout(endpointUrl(deployment.apiBase, MODULES_PATH), {
+    method: "GET",
+    headers: bearerHeaders(auth.token, false),
+  });
+  return readJsonResponse(response, "module_list_failed");
+}
+
+async function listModuleStudents({ moduleId }) {
+  const { deployment, auth } = await requireInvigilatorContext();
+  const response = await fetchWithTimeout(endpointUrl(deployment.apiBase, `${MODULES_PATH}/${moduleId}/students`), {
+    method: "GET",
+    headers: bearerHeaders(auth.token, false),
+  });
+  return readJsonResponse(response, "module_students_failed");
+}
+
+async function getStudentHistory({ moduleId, studentId }) {
+  const { deployment, auth } = await requireInvigilatorContext();
+  const query = new URLSearchParams({ student_id: studentId }).toString();
+  const response = await fetchWithTimeout(
+    `${endpointUrl(deployment.apiBase, `${MODULES_PATH}/${moduleId}/students/history`)}?${query}`,
+    { method: "GET", headers: bearerHeaders(auth.token, false) }
+  );
+  return readJsonResponse(response, "student_history_failed");
+}
+
+// ---- Module enrollment (student side: enroll/login, cached profile, quiz polling) ----
+
+async function readModuleAuth() {
+  const stored = await chrome.storage.local.get(MODULE_AUTH_STORAGE_KEY);
+  const value = stored?.[MODULE_AUTH_STORAGE_KEY];
+  if (!value || typeof value !== "object" || !value.token) return null;
+  return value;
+}
+
+async function writeModuleAuth(auth) {
+  await chrome.storage.local.set({ [MODULE_AUTH_STORAGE_KEY]: auth });
+  return auth;
+}
+
+async function clearModuleAuth() {
+  await chrome.storage.local.set({ [MODULE_AUTH_STORAGE_KEY]: null });
+}
+
+async function requireModuleContext() {
+  const deployment = await getOrDetectDeployment();
+  assert(deployment, "deployment_not_configured", "Connect this extension to an AccessGuard server first");
+  const auth = await readModuleAuth();
+  assert(auth?.token, "module_not_signed_in", "Sign in with your module student account first");
+  return { deployment, auth };
+}
+
+async function refreshModuleProfile(deployment, token) {
+  const response = await fetchWithTimeout(endpointUrl(deployment.apiBase, STUDENT_ME_PATH), {
+    method: "GET",
+    headers: bearerHeaders(token, false),
+  });
+  const profile = await readJsonResponse(response, "module_profile_failed");
+  const existing = (await readModuleAuth()) || {};
+  const existingByCode = new Map((existing.modules || []).map((m) => [m.code, m]));
+  const modules = (profile.modules || []).map((m) => ({
+    id: m.id,
+    code: m.code,
+    name: m.name,
+    latestQuiz: existingByCode.get(m.code)?.latestQuiz || null,
+  }));
+  return writeModuleAuth({
+    token,
+    studentId: profile.student_id,
+    fullName: profile.full_name,
+    modules,
+  });
+}
+
+async function moduleEnroll({ enrollCode, studentId, fullName, password }) {
+  const payload = validateModuleEnrollForm({ enrollCode, studentId, fullName, password });
+  const deployment = await getOrDetectDeployment();
+  assert(deployment, "deployment_not_configured", "Connect this extension to an AccessGuard server first");
+
+  const response = await fetchWithTimeout(endpointUrl(deployment.apiBase, STUDENT_JOIN_PATH), {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify({
+      enroll_code: payload.enrollCode,
+      student_id: payload.studentId,
+      full_name: payload.fullName,
+      password: payload.password,
+    }),
+  });
+  const data = await readJsonResponse(response, "module_enroll_failed");
+  await writeModuleAuth({ token: data.token, studentId: data.student_id, fullName: data.full_name, modules: [] });
+  return refreshModuleProfile(deployment, data.token);
+}
+
+async function moduleLogin({ studentId, password }) {
+  const payload = validateStudentLoginForm({ studentId, password });
+  const deployment = await getOrDetectDeployment();
+  assert(deployment, "deployment_not_configured", "Connect this extension to an AccessGuard server first");
+
+  const response = await fetchWithTimeout(endpointUrl(deployment.apiBase, STUDENT_LOGIN_PATH), {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify({ student_id: payload.studentId, password: payload.password }),
+  });
+  const data = await readJsonResponse(response, "module_login_failed");
+  await writeModuleAuth({ token: data.token, studentId: data.student_id, fullName: data.full_name, modules: [] });
+  return refreshModuleProfile(deployment, data.token);
+}
+
+async function moduleLogout() {
+  await clearModuleAuth();
+  return { signedOut: true };
+}
+
+async function getModuleStatus() {
+  let auth = await readModuleAuth();
+  if (!auth) return { signedIn: false, studentId: null, fullName: null, modules: [] };
+  // Catch up immediately rather than waiting for the next background alarm
+  // tick (up to QUIZ_POLL_MINUTES away) — this is what the popup calls every
+  // time "My modules" is opened, so it must never show stale data.
+  await pollModuleQuizzes().catch(() => undefined);
+  auth = (await readModuleAuth()) || auth;
+  return { signedIn: true, studentId: auth.studentId, fullName: auth.fullName, modules: auth.modules || [] };
+}
+
+function moduleQuizNotificationId(moduleCode) {
+  return `module-quiz-${moduleCode}`;
+}
+
+async function openModuleQuiz({ moduleCode }) {
+  const { deployment, auth } = await requireModuleContext();
+  const params = new URLSearchParams({
+    module: moduleCode,
+    student_id: auth.studentId || "",
+    name: auth.fullName || "",
+  });
+  const tab = await chrome.tabs.create({ url: `${deployment.appOrigin}/quiz/prompt?${params.toString()}` });
+  return { opened: true, tabId: tab.id };
+}
+
+async function pollModuleQuizzes() {
+  const auth = await readModuleAuth();
+  if (!auth?.token) return;
+  const deployment = await getOrDetectDeployment();
+  if (!deployment) return;
+
+  let changed = false;
+  const nextModules = [];
+  for (const module of auth.modules || []) {
+    let latest = module.latestQuiz || null;
+    try {
+      const response = await fetchWithTimeout(
+        endpointUrl(deployment.apiBase, `${STUDENT_MODULES_PATH}/${encodeURIComponent(module.code)}/quizzes`),
+        { method: "GET", headers: bearerHeaders(auth.token, false) }
+      );
+      const rows = await readJsonResponse(response, "module_quiz_poll_failed");
+      const found = Array.isArray(rows) && rows.length ? rows[0] : null;
+      if (found?.id !== (latest?.id || null)) {
+        changed = true;
+        latest = found;
+        if (found) {
+          const message = `${found.quiz_prompt_title || found.exam_name || "A new quiz"} is ready for ${module.code}.`;
+          await chrome.notifications.create(moduleQuizNotificationId(module.code), {
+            type: "basic",
+            iconUrl:
+              "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI2NCIgaGVpZ2h0PSI2NCI+PGNpcmNsZSBjeD0iMzIiIGN5PSIzMiIgcj0iMzAiIGZpbGw9IiMwMGM4ZGYiLz48L3N2Zz4=",
+            title: "AccessGuard: quiz available",
+            message,
+            priority: 1,
+          });
+        }
+      }
+    } catch (error) {
+      if (error?.code === "candidate_auth_failed") {
+        // No longer enrolled in this module (e.g. it was removed) — drop it
+        // instead of retrying forever against a module that will never 200.
+        changed = true;
+        continue;
+      }
+      // Any other transient poll failure for one module should not block the others.
+    }
+    nextModules.push({ ...module, latestQuiz: latest });
+  }
+
+  if (changed) {
+    await writeModuleAuth({ ...auth, modules: nextModules });
+  }
+}
+
+chrome.notifications.onClicked.addListener((notificationId) => {
+  void serialize(async () => {
+    const match = /^module-quiz-(.+)$/.exec(notificationId || "");
+    if (!match) return;
+    await chrome.notifications.clear(notificationId);
+    await openModuleQuiz({ moduleCode: match[1] }).catch(() => undefined);
+  });
+});
 
 async function joinFromExtension({ sessionCode, studentId, fullName }) {
   const deployment = await getOrDetectDeployment();
@@ -458,7 +686,7 @@ async function joinFromExtension({ sessionCode, studentId, fullName }) {
 async function fetchQuickSessionCandidateCount(apiBase, token, sessionId) {
   const response = await fetchWithTimeout(endpointUrl(apiBase, `${SESSIONS_PATH}/${sessionId}/candidates`), {
     method: "GET",
-    headers: invigilatorHeaders(token, false),
+    headers: bearerHeaders(token, false),
   });
   const rows = await readJsonResponse(response, "quick_session_status_failed");
   return Array.isArray(rows) ? rows.length : 0;
@@ -1193,6 +1421,15 @@ async function handlePopupMessage(message, sender) {
   if (message?.action === "CREATE_QUICK_SESSION") return createQuickSession(message);
   if (message?.action === "END_QUICK_SESSION") return endQuickSession();
   if (message?.action === "EXTENSION_JOIN") return publicStatus(await joinFromExtension(message));
+  if (message?.action === "CREATE_MODULE") return createModule(message);
+  if (message?.action === "LIST_MODULES") return listModules();
+  if (message?.action === "LIST_MODULE_STUDENTS") return listModuleStudents(message);
+  if (message?.action === "GET_STUDENT_HISTORY") return getStudentHistory(message);
+  if (message?.action === "MODULE_ENROLL") return moduleEnroll(message);
+  if (message?.action === "MODULE_LOGIN") return moduleLogin(message);
+  if (message?.action === "MODULE_LOGOUT") return moduleLogout();
+  if (message?.action === "GET_MODULE_STATUS") return getModuleStatus();
+  if (message?.action === "OPEN_MODULE_QUIZ") return openModuleQuiz(message);
   throw new LockdownError("unsupported_action", "Unsupported popup action");
 }
 
@@ -1294,6 +1531,10 @@ chrome.idle.onStateChanged.addListener((state) => {
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === QUIZ_POLL_ALARM) {
+    void serialize(() => pollModuleQuizzes());
+    return;
+  }
   if (alarm.name !== POLICY_ALARM) return;
   void serialize(async () => {
     let runtime = await readRuntime();
@@ -1314,9 +1555,17 @@ async function ensurePolicyAlarm() {
   });
 }
 
+async function ensureQuizPollAlarm() {
+  await chrome.alarms.create(QUIZ_POLL_ALARM, {
+    delayInMinutes: QUIZ_POLL_MINUTES,
+    periodInMinutes: QUIZ_POLL_MINUTES,
+  });
+}
+
 async function restoreEnforcement() {
   await configureStorageAccess();
   await ensurePolicyAlarm();
+  await ensureQuizPollAlarm();
   let runtime = await readRuntime();
   const ruleIds = await ownedRuleIds().catch(() => []);
 

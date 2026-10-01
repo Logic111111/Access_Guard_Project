@@ -49,6 +49,43 @@ identity verification and manual approval.
 Invigilator and candidate credentials are stored under separate extension
 storage keys and are never sent on the same request.
 
+## Module enrollment and quiz notifications
+
+For recurring classes, invigilators can create a durable **module** instead of
+a one-off quick session, and students enroll into it once with a password —
+distinct from the quick-session join above, and from the full-exam ID-photo
+join flow, which are both unchanged.
+
+1. **Invigilator: create a module.** From the popup's Invigilator tab, switch
+   to **Modules**, then create one (code + name). The popup shows the
+   generated enrollment code to hand out to students. To publish a quiz to
+   everyone enrolled, use the **Quick Session** tab's "Publish to module"
+   dropdown when starting a session — selecting a module sets `quiz_mode`,
+   `published`, and `module_code` on that session automatically (the web
+   app's own session creator supports the same fields directly, too).
+2. **Student: enroll once.** From the popup's Student tab, switch to **My
+   modules**, and enroll with the module's enrollment code, a student ID, full
+   name, and a password. The same `student_id` + password is reused to enroll
+   in further modules later — enter a new module's code without re-registering
+   an account. Returning students can just sign in with student ID + password.
+3. **Notified even with the popup closed.** The service worker polls each
+   enrolled module roughly once a minute and fires a native browser
+   notification the moment a new quiz is published — no tab or the popup needs
+   to be open. Clicking the notification (or the "Join Quiz" button in the
+   popup) opens the web app's quiz page prefilled with the module and student
+   identity; if the extension is installed, the exam page arms lockdown
+   exactly as it does for any other exam, through the same `ARM` bridge.
+
+The module student token is a separate, longer-lived credential from both the
+per-attempt candidate token and the invigilator token, stored under yet
+another dedicated storage key.
+
+**Roster and per-student history.** From the popup's Modules tab, "View
+roster" on any module lists its enrolled students. "View history" on a
+student shows every session that invigilator owns under that module the
+student has attended — exam name, status, submission time, per-question
+answers, and grade — scoped to that invigilator's own sessions only.
+
 ## Web-page bridge protocol
 
 The content bridge accepts same-window, same-origin requests with this shape:

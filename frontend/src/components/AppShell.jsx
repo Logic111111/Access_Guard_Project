@@ -1,7 +1,7 @@
 import React from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { Logo } from "./Logo";
-import { LayoutDashboard, ServerCog, Users, FileText, ShieldCheck, Bell, LogOut } from "lucide-react";
+import { LayoutDashboard, ServerCog, Users, FileText, ShieldCheck, Bell, LogOut, Code2 } from "lucide-react";
 import { setToken, setUser, getUser } from "../lib/api";
 
 const NavItem = ({ to, icon: Icon, label, testid }) => (
@@ -35,6 +35,16 @@ export default function AppShell({ children, title, breadcrumb }) {
           <NavItem to="/students" icon={Users} label="Students" testid="nav-students" />
           <NavItem to="/reports" icon={FileText} label="Reports" testid="nav-reports" />
           <NavItem to="/settings" icon={ShieldCheck} label="Settings" testid="nav-settings" />
+          <a
+            href="http://localhost:8000/docs"
+            target="_blank"
+            rel="noopener noreferrer"
+            data-testid="nav-api-docs"
+            className="flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all text-cyan hover:bg-cyan/10 border border-cyan/20 font-mono text-xs mt-2"
+          >
+            <Code2 size={16} />
+            <span>API Docs (Swagger)</span>
+          </a>
         </nav>
         <div className="mt-auto glass rounded-lg p-3 text-xs">
           <div className="label-mono">SIGNED IN</div>

@@ -52,6 +52,11 @@ export function createChromeMock({ managedTrust = {} } = {}) {
     },
     idle: { onStateChanged: event("idle.onStateChanged") },
     alarms: { create: async () => undefined, onAlarm: event("alarms.onAlarm") },
+    notifications: {
+      create: async () => `notification-${Math.random().toString(36).slice(2)}`,
+      clear: async () => undefined,
+      onClicked: event("notifications.onClicked"),
+    },
   };
   return { chrome, listeners, storage };
 }
