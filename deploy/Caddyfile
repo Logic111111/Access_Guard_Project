@@ -1,0 +1,13 @@
+{
+	email {$ACME_EMAIL}
+}
+
+{$APP_DOMAIN} {
+	encode zstd gzip
+
+	# nginx in the frontend container serves the SPA and proxies /api and the
+	# live WebSocket to FastAPI. Caddy only terminates TLS in front of it.
+	reverse_proxy frontend:80 {
+		header_up X-Forwarded-Proto https
+	}
+}

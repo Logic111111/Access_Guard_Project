@@ -1,0 +1,21 @@
+{
+  "type": "object",
+  "properties": {
+    "trusted_app_origins": {
+      "title": "Trusted AccessGuard application origins",
+      "description": "Exact HTTPS origins allowed to arm the extension.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "trusted_api_origins": {
+      "title": "Trusted AccessGuard API origins",
+      "description": "Exact HTTPS origins from which authenticated policy may be loaded.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { Logo } from "../components/Logo";
 import { api } from "../lib/api";
@@ -17,7 +17,7 @@ export default function QuizPrompt() {
   const [notice, setNotice] = useState("");
   const lastNotifiedQuizRef = useRef(null);
 
-  const loadQuiz = async (showLoading = true) => {
+  const loadQuiz = useCallback(async (showLoading = true) => {
     const params = new URLSearchParams(location.search);
     const rawModule = params.get("module") || params.get("module_code") || params.get("module_name") || params.get("course") || "";
     const module = rawModule.trim().toUpperCase();
@@ -66,14 +66,14 @@ export default function QuizPrompt() {
     } finally {
       if (showLoading) setLoading(false);
     }
-  };
+  }, [location.search]);
 
   useEffect(() => {
     lastNotifiedQuizRef.current = null;
     void loadQuiz(true);
     const timer = setInterval(() => { void loadQuiz(false); }, 8000);
     return () => clearInterval(timer);
-  }, [location.search]);
+  }, [loadQuiz]);
 
   const continueToJoin = () => {
     const query = new URLSearchParams({

@@ -43,6 +43,75 @@ export default function LockdownQuiz() {
     return () => clearInterval(t);
   }, [candidateId, session, locked]);
 
+  const [violations, setViolations] = useState(0);
+  const [isFullscreen, setIsFullscreen] = useState(!!document.fullscreenElement);
+
+  // Fullscreen tracking
+  useEffect(() => {
+    const onFS = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", onFS);
+    return () => document.removeEventListener("fullscreenchange", onFS);
+  }, []);
+
+  const enterFullscreen = () => {
+    if (document.documentElement.requestFullscreen) {
+      document.documentElement.requestFullscreen().then(() => setIsFullscreen(true)).catch(() => {});
+    }
+  };
+
+  // Tab lockdown & cheat prevention
+  useEffect(() => {
+    if (!candidateId || !session || locked) return;
+
+    const onBlur = () => {
+      api.post("/public/violations", { candidate_id: candidateId, kind: "tab_switch", detail: "Quiz window focus lost" }).catch(() => {});
+      setViolations((v) => v + 1);
+      toast.error("Tab switch detected!");
+    };
+
+    const onMouseLeave = (e) => {
+      if (e.clientY <= 0 || e.clientX <= 0 || e.clientX >= window.innerWidth || e.clientY >= window.innerHeight) {
+        api.post("/public/violations", { candidate_id: candidateId, kind: "tab_switch", detail: "Cursor left quiz window" }).catch(() => {});
+        setViolations((v) => v + 1);
+        toast.warning("Mouse cursor moved outside secure quiz!");
+      }
+    };
+
+    const onKeyDown = (e) => {
+      if (
+        e.key === "F12" ||
+        (e.ctrlKey && e.shiftKey && (e.key === "I" || e.key === "i" || e.key === "J" || e.key === "j" || e.key === "C" || e.key === "c")) ||
+        (e.ctrlKey && (e.key === "t" || e.key === "T" || e.key === "w" || e.key === "W" || e.key === "n" || e.key === "N" || e.key === "r" || e.key === "R")) ||
+        (e.altKey && e.key === "Tab")
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
+        toast.error(`Key combination [${e.key}] blocked during quiz lockdown.`);
+      }
+    };
+
+    const onCopy = (e) => {
+      e.preventDefault();
+      toast.error("Copying quiz questions is disabled.");
+    };
+
+    const onContextMenu = (e) => e.preventDefault();
+
+    window.addEventListener("blur", onBlur);
+    document.addEventListener("mouseleave", onMouseLeave);
+    window.addEventListener("keydown", onKeyDown);
+    document.addEventListener("copy", onCopy);
+    document.addEventListener("contextmenu", onContextMenu);
+
+    return () => {
+      window.removeEventListener("blur", onBlur);
+      document.removeEventListener("mouseleave", onMouseLeave);
+      window.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("copy", onCopy);
+      document.removeEventListener("contextmenu", onContextMenu);
+    };
+  }, [candidateId, session, locked]);
+
   useEffect(() => {
     if (!candidateId || !candidateToken || !session) return;
     navigator.mediaDevices?.getUserMedia?.({ video: { facingMode: "user" }, audio: false })
@@ -76,6 +145,18 @@ export default function LockdownQuiz() {
     } catch (e) {
       toast.error("Failed to submit quiz");
     } finally { setSubmitting(false); }
+  };
+
+  const exitQuiz = async () => {
+    if (candidateId) {
+      try {
+        await api.post(`/public/candidates/${candidateId}/exit`);
+      } catch (e) {}
+    }
+    toast.info("Exited secure quiz session.");
+    sessionStorage.removeItem("ag_candidate_id");
+    sessionStorage.removeItem("ag_candidate_token");
+    nav("/student");
   };
 
   const lockNow = async () => {
@@ -143,9 +224,12 @@ export default function LockdownQuiz() {
           </div>
         ))}
 
-        <div className="flex justify-between gap-3">
-          <button onClick={lockNow} className="btn-ghost-violet rounded-full px-5 py-2.5 flex items-center gap-2 text-xs"><ShieldCheck size={14}/> Simulate Lockdown</button>
-          <button onClick={submit} disabled={submitting} className="btn-cyan rounded-full px-6 py-2.5 flex items-center gap-2"><Send size={16}/> {submitting ? "Submitting..." : "Submit Quiz"}</button>
+        <div className="flex justify-between gap-3 flex-wrap">
+          <div className="flex gap-2">
+            <button onClick={lockNow} className="btn-ghost-violet rounded-full px-5 py-2.5 flex items-center gap-2 text-xs"><ShieldCheck size={14}/> Simulate Lockdown</button>
+            <button onClick={exitQuiz} className="btn-ghost-cyan rounded-full px-5 py-2.5 flex items-center gap-2 text-xs font-semibold">Exit Session</button>
+          </div>
+          <button onClick={submit} disabled={submitting} className="btn-cyan rounded-full px-6 py-2.5 flex items-center gap-2 font-semibold"><Send size={16}/> {submitting ? "Submitting..." : "Submit Quiz"}</button>
         </div>
       </div>
     </div>

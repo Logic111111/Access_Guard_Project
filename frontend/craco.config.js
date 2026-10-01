@@ -23,6 +23,13 @@ if (config.enableHealthCheck) {
 }
 
 let webpackConfig = {
+  jest: {
+    configure: {
+      moduleNameMapper: {
+        "^@/(.*)$": "<rootDir>/src/$1",
+      },
+    },
+  },
   eslint: {
     configure: {
       extends: ["plugin:react-hooks/recommended"],
@@ -49,6 +56,14 @@ let webpackConfig = {
             '**/coverage/**',
             '**/public/**',
         ],
+      };
+
+      // face-api.js references Node's fs for its Node build; it is never used
+      // in the browser bundle, so resolve it to an empty module.
+      webpackConfig.resolve = webpackConfig.resolve || {};
+      webpackConfig.resolve.fallback = {
+        ...(webpackConfig.resolve.fallback || {}),
+        fs: false,
       };
 
       // Add health check plugin to webpack if enabled

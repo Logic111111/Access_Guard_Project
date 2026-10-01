@@ -1,0 +1,132 @@
+name: accessguard
+
+services:
+  mongo:
+    image: mongo:7.0
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: "${MONGO_ROOT_USERNAME:-accessguard}"
+      MONGO_INITDB_ROOT_PASSWORD: "${MONGO_ROOT_PASSWORD:?Set MONGO_ROOT_PASSWORD in .env}"
+      MONGO_INITDB_DATABASE: "${MONGO_DB:-accessguard}"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          mongosh --quiet --host 127.0.0.1
+          --username "$${MONGO_INITDB_ROOT_USERNAME}"
+          --password "$${MONGO_INITDB_ROOT_PASSWORD}"
+          --authenticationDatabase admin
+          --eval "db.adminCommand({ ping: 1 })" >/dev/null
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - data
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    environment:
+      APP_ENV: production
+      ALLOW_REMOTE_LOGIN: "0"
+      ALLOW_SELF_REGISTRATION: "0"
+      SIMULATE_511: "0"
+      MONGO_URL: "mongodb://${MONGO_ROOT_USERNAME:-accessguard}:${MONGO_ROOT_PASSWORD:?Set MONGO_ROOT_PASSWORD in .env}@mongo:27017/${MONGO_DB:-accessguard}?authSource=admin"
+      DB_NAME: "${MONGO_DB:-accessguard}"
+      JWT_SECRET: "${JWT_SECRET:?Set JWT_SECRET in .env}"
+      JWT_ALGORITHM: "${JWT_ALGORITHM:-HS256}"
+      ADMIN_INV_ID: "${ADMIN_INV_ID:-admin}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}"
+      REMOTE_LOGIN_SECRET: "${REMOTE_LOGIN_SECRET:?Set REMOTE_LOGIN_SECRET in .env}"
+      CANDIDATE_TOKEN_TTL_HOURS: "${CANDIDATE_TOKEN_TTL_HOURS:-12}"
+      ALLOW_LEGACY_CANDIDATE_TOKENS: "0"
+      EXTENSION_HEARTBEAT_GRACE_SEC: "${EXTENSION_HEARTBEAT_GRACE_SEC:-45}"
+      VIOLATION_DEDUPE_SEC: "${VIOLATION_DEDUPE_SEC:-5}"
+      CORS_ORIGINS: "${APP_ORIGIN:?Set APP_ORIGIN in .env}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
+      EMERGENT_LLM_KEY: "${EMERGENT_LLM_KEY:-}"
+    expose:
+      - "8000"
+    depends_on:
+      mongo:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3).read(1)
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks:
+      - edge
+      - data
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        REACT_APP_BACKEND_URL: ""
+    restart: unless-stopped
+    init: true
+    ports:
+      - "${APP_BIND_ADDRESS:-127.0.0.1}:${APP_PORT:-8080}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - --quiet
+        - --tries=1
+        - --spider
+        - http://127.0.0.1/healthz
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - edge
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+volumes:
+  mongo_data:
+
+networks:
+  edge:
+  data:
+    internal: true

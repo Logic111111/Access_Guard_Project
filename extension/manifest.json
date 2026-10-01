@@ -1,0 +1,45 @@
+{
+  "manifest_version": 3,
+  "name": "AccessGuard Lockdown",
+  "version": "1.3.1",
+  "description": "Enforces AccessGuard exam navigation policies and reports lockdown health.",
+  "minimum_chrome_version": "120",
+  "permissions": [
+    "alarms",
+    "declarativeNetRequest",
+    "idle",
+    "notifications",
+    "storage",
+    "tabs",
+    "webNavigation"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "service-worker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "AccessGuard Lockdown",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "content-bridge.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ],
+  "storage": {
+    "managed_schema": "managed-policy-schema.json"
+  },
+  "incognito": "not_allowed"
+}
