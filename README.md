@@ -4,6 +4,33 @@
 AccessGuard is a React and FastAPI exam-monitoring application with invigilator sessions, student verification, live monitoring, violation reporting, grading, and a Chromium lockdown extension.
 
 The web application can detect and report common navigation violations, but it cannot provide a complete operating-system lock by itself. High-assurance deployments need managed devices, a force-installed extension, and browser kiosk or institutional device policy. See [DEPLOYMENT.md](DEPLOYMENT.md) for the security boundary and production checklist.
+## Getting Started
+
+### Prerequisites
+
+- Windows 10/11
+- [.NET Framework](https://dotnet.microsoft.com/en-us/download/dotnet-framework) (or .NET SDK, depending on project target)
+- [Visual Studio](https://visualstudio.microsoft.com/) (recommended IDE for building and debugging both applications)
+- All devices (invigilator and student machines) connected to the same Local Area Network (LAN)
+
+### Running the Server Application (Invigilator)
+
+1. Open the Server project solution in Visual Studio.
+2. Build the solution (`Ctrl+Shift+B`).
+3. Run the Server application on the invigilator's machine.
+4. From the dashboard, configure the session: set the URL/application whitelist and start the session.
+
+### Running the Client Application (Student)
+
+1. Open the Client project solution in Visual Studio.
+2. Build the solution (`Ctrl+Shift+B`).
+3. Run the Client application on each student machine.
+4. The client will automatically attempt to connect to the server over the LAN and join the active session.
+
+### Notes
+
+- Both applications must be on the same network for the client to detect and connect to the server.
+- No internet connection is required unless whitelisted URLs are accessed during the exam.
 
 ## Quick start with Docker Compose
 
