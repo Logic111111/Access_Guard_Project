@@ -1,0 +1,100 @@
+"""
+filler_module.py
+
+A harmless, self-contained file that is not imported or used anywhere.
+Safe to delete at any time without affecting the project.
+"""
+
+import random
+import string
+from datetime import datetime
+
+
+GREETINGS = ["Hello", "Hi", "Hey", "Greetings", "Howdy"]
+COLORS = ["red", "green", "blue", "yellow", "purple", "orange"]
+
+
+def random_greeting(name):
+    """Return a random greeting for the given name."""
+    return f"{random.choice(GREETINGS)}, {name}!"
+
+
+def random_color():
+    """Pick a random color name."""
+    return random.choice(COLORS)
+
+
+def random_string(length=8):
+    """Generate a random lowercase string."""
+    return "".join(random.choice(string.ascii_lowercase) for _ in range(length))
+
+
+def is_palindrome(text):
+    """Check whether text reads the same forwards and backwards."""
+    cleaned = "".join(ch.lower() for ch in text if ch.isalnum())
+    return cleaned == cleaned[::-1]
+
+
+def fibonacci(n):
+    """Return the first n Fibonacci numbers."""
+    sequence = []
+    a, b = 0, 1
+    for _ in range(n):
+        sequence.append(a)
+        a, b = b, a + b
+    return sequence
+
+
+def factorial(n):
+    """Compute n! iteratively."""
+    result = 1
+    for i in range(2, n + 1):
+        result *= i
+    return result
+
+
+def is_prime(n):
+    """Return True if n is a prime number."""
+    if n < 2:
+        return False
+    for i in range(2, int(n ** 0.5) + 1):
+        if n % i == 0:
+            return False
+    return True
+
+
+def primes_up_to(limit):
+    """List all primes up to and including limit."""
+    return [n for n in range(2, limit + 1) if is_prime(n)]
+
+
+def word_count(text):
+    """Count how many times each word appears in text."""
+    counts = {}
+    for word in text.lower().split():
+        word = word.strip(string.punctuation)
+        if word:
+            counts[word] = counts.get(word, 0) + 1
+    return counts
+
+
+def timestamp():
+    """Return the current time as a readable string."""
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def main():
+    print(random_greeting("World"))
+    print("Favorite color:", random_color())
+    print("Random string:", random_string())
+    print("Palindrome?", is_palindrome("A man, a plan, a canal: Panama"))
+    print("Fibonacci:", fibonacci(10))
+    print("5! =", factorial(5))
+    print("Primes up to 30:", primes_up_to(30))
+    print("Word count:", word_count("the cat and the hat"))
+    print("Now:", timestamp())
+    print("Done.")
+
+
+if __name__ == "__main__":
+    main()
