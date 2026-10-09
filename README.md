@@ -88,3 +88,13 @@ The API integration suite mutates database records. Run it only with a dedicated
 ## Local launcher
 
 `start_test.ps1` remains available for local demos. It can stop processes already listening on ports 3000 and 8000 and writes demo credentials, so review it before running and never use it as a production process manager.
+
+## Future Enhancements
+
+The following items are currently out of scope for this release but are being considered for future iterations:
+
+- **Cross-Platform Support** — extend the Client and Server applications to macOS and Linux, beyond the current Windows-only support.
+- **LMS Integration** — connect AccessGuard with external Learning Management Systems (e.g. Moodle, Google Classroom) for automated student/session import, removing the need for manual setup.
+- **Mobile Applications** — explore lightweight Android/iOS companion apps for invigilators to monitor sessions on the go.
+- **Advanced Violation Detection** — expand beyond basic disconnection/termination alerts to include behavior-based anomaly detection (e.g. unusual mouse/keyboard inactivity patterns).
+- **Cloud-Based Session Storage** — optional cloud backup of session logs for institutions running exams across multiple labs or campuses.
