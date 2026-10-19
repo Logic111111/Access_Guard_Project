@@ -5,12 +5,18 @@ import { api } from "../lib/api";
 import { Check, ArrowLeft, ArrowRight, Plus, X, Rocket } from "lucide-react";
 import { toast } from "sonner";
 
+// Ordered labels for the 5-step session creation wizard
 const STEPS = ["Identify", "Configure", "Questions", "Whitelist", "Launch"];
 
+// Multi-step wizard for invigilators to configure and launch a new exam session
+// (or a "quick quiz" variant for in-class module assessments).
 export default function CreateSession() {
   const nav = useNavigate();
   const location = useLocation();
   const [step, setStep] = useState(0);
+
+  // Holds all wizard form data across every step, including default values
+  // for exam settings, security/lockdown options, and sample starter questions.
   const [form, setForm] = useState({
     exam_name: "",
     exam_code: "",
@@ -43,8 +49,12 @@ export default function CreateSession() {
   });
   const [created, setCreated] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+
+  // Shorthand helper to update a single field in the form state
   const upd = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
+  // If the page is opened with ?mode=quiz in the URL, pre-configure the form
+  // as a quick, published module quiz instead of a full exam session.
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     if (params.get("mode") === "quiz") {
@@ -55,9 +65,11 @@ export default function CreateSession() {
     }
   }, [location.search]);
 
+  // Step navigation: clamps between the first (0) and last (4) step
   const next = () => setStep(s => Math.min(4, s + 1));
   const back = () => setStep(s => Math.max(0, s - 1));
 
+  // Adds a new blank question (and a matching empty model answer) to the form
   const addQuestion = () => {
     const id = "q" + Date.now();
     setForm(f => ({
@@ -67,6 +79,7 @@ export default function CreateSession() {
     }));
   };
 
+  // Removes a question and its associated model answer by id
   const removeQuestion = (id) => {
     setForm(f => {
       const newAnswers = { ...f.model_answers };
@@ -79,6 +92,7 @@ export default function CreateSession() {
     });
   };
 
+  // Updates a single property (text, type, marks, options, etc.) of one question
   const updateQuestion = (id, key, val) => {
     setForm(f => ({
       ...f,
@@ -86,6 +100,7 @@ export default function CreateSession() {
     }));
   };
 
+  // Updates the model/reference answer used for auto-grading a given question
   const updateModelAnswer = (id, val) => {
     setForm(f => ({
       ...f,
@@ -93,6 +108,8 @@ export default function CreateSession() {
     }));
   };
 
+  // Submits the final form to the backend to create (and launch) the session.
+  // Normalizes quiz-mode-only fields so they're blank/false when not in quiz mode.
   const launch = async () => {
     setSubmitting(true);
     try {
@@ -136,6 +153,7 @@ export default function CreateSession() {
       </div>
 
       <div className="max-w-3xl mx-auto glass rounded-2xl p-8" data-testid="wizard-card">
+        {/* Step 1: basic exam identity — name, code, date, and quiz-mode toggle */}
         {step === 0 && (
           <div className="space-y-5">
             <h2 className="font-display text-2xl">Step 1 — Identify</h2>
@@ -168,6 +186,7 @@ export default function CreateSession() {
           </div>
         )}
 
+        {/* Step 2: session configuration — timing, limits, and security/lockdown settings */}
         {step === 1 && (
           <div className="space-y-5">
             <h2 className="font-display text-2xl">Step 2 — Configure</h2>
@@ -205,6 +224,7 @@ export default function CreateSession() {
                 </label>
               ))}
             </div>
+            {/* Browser lockdown mode: extension-enforced vs browser-only monitoring */}
             <div className="glass rounded-xl p-4 border border-cyan/20 space-y-3">
               <div>
                 <label className="label-mono">Browser Security Mode</label>
@@ -235,6 +255,7 @@ export default function CreateSession() {
           </div>
         )}
 
+        {/* Step 3: question builder — add/edit/remove written or multiple-choice questions */}
         {step === 2 && (
           <div className="space-y-5">
             <h2 className="font-display text-2xl">Step 3 — Questions</h2>
@@ -255,6 +276,8 @@ export default function CreateSession() {
                       className="input-hud mt-1"
                       value={q.type || "text"}
                       onChange={e => {
+                        // Switching question type resets options/model answer to
+                        // avoid carrying over stale data from the previous type
                         updateQuestion(q.id, "type", e.target.value);
                         updateQuestion(q.id, "options", e.target.value === "mcq" ? ["", "", "", ""] : []);
                         updateModelAnswer(q.id, "");
@@ -270,6 +293,7 @@ export default function CreateSession() {
                   </div>
                 </div>
 
+                {/* Only shown for multiple-choice questions: 4 fixed option slots (A-D) */}
                 {q.type === "mcq" && (
                   <div className="mt-4 space-y-2 bg-elevated/20 p-3 rounded-lg border border-violet/15">
                     <label className="label-mono text-xs">Multiple Choice Options</label>
@@ -298,6 +322,7 @@ export default function CreateSession() {
                   </div>
                 )}
 
+                {/* Model/reference answer: a dropdown (A-D) for MCQ, free text for written answers */}
                 <div className="mt-4">
                   <label className="label-mono">
                     {q.type === "mcq" ? "Select Correct Option (Model Answer)" : "Model Answer (For Auto-Grading)"}
@@ -326,6 +351,7 @@ export default function CreateSession() {
           </div>
         )}
 
+        {/* Step 4: whitelist — allowed URLs and applications during the exam */}
         {step === 3 && (
           <div className="space-y-5">
             <h2 className="font-display text-2xl">Step 4 — Whitelist</h2>
@@ -341,12 +367,14 @@ export default function CreateSession() {
           </div>
         )}
 
+        {/* Step 5: review summary, quiz-mode publishing options, and the launch action */}
         {step === 4 && (
           <div className="space-y-5">
             <h2 className="font-display text-2xl">Step 5 — Launch</h2>
             <p className="text-white/60 text-sm">
               Review and launch. A unique session code (hashed) will be generated for candidates.
             </p>
+            {/* Extra fields only relevant when publishing as a quick module quiz */}
             {form.quiz_mode && (
               <div className="glass rounded-lg p-4 space-y-3">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -372,6 +400,7 @@ export default function CreateSession() {
                 </div>
               </div>
             )}
+            {/* Quick summary of the configured session before launching */}
             <div className="glass rounded-lg p-4 grid grid-cols-2 gap-3 font-mono text-sm">
               <div><span className="label-mono">EXAM</span><div>{form.exam_name}</div></div>
               <div><span className="label-mono">CODE</span><div>{form.exam_code}</div></div>
@@ -381,6 +410,7 @@ export default function CreateSession() {
               <div><span className="label-mono">APPS</span><div>{form.whitelisted_apps.length}</div></div>
               <div><span className="label-mono">SECURITY</span><div>{form.lockdown_mode === "extension_required" ? "EXTENSION" : "MONITOR"}</div></div>
             </div>
+            {/* Shown once the session has been successfully created, with the join code */}
             {created && (
               <div className="glass glass-violet rounded-lg p-5 text-center" data-testid="session-launched">
                 <div className="label-mono text-online">SESSION LAUNCHED</div>
@@ -397,6 +427,7 @@ export default function CreateSession() {
           </div>
         )}
 
+        {/* Wizard navigation: Back / Next, or Launch on the final step. Hidden once launched. */}
         {!created && (
           <div className="flex justify-between mt-8">
             <button data-testid="wizard-back-btn" onClick={back} disabled={step === 0}
@@ -422,6 +453,8 @@ export default function CreateSession() {
   );
 }
 
+// Reusable tag-list input: lets the user type a value, add it as a pill/chip,
+// and remove individual chips. Used here for whitelisted URLs and apps.
 function ListEditor({ label, items, onChange, placeholder, testid }) {
   const [val, setVal] = useState("");
   return (
