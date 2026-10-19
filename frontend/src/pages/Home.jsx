@@ -40,13 +40,13 @@ export default function Home() {
               <ChevronRight size={24} className="text-white/50 group-hover:text-cyan" />
             </div>
           </Link>
-          {/* Arrow icon highlights on hover to indicate this card is clickable */}
+          {/* Arrow icon highlights on hover to indicate this card is clickable */
           /* Arrow icon highlights on hover to indicate this card is clickable */
           /* Arrow icon highlights on hover to indicate this card is clickable */
           /* Arrow icon highlights on hover to indicate this card is clickable */
           /* Arrow icon highlights on hover to indicate this card is clickable */
           /* Arrow icon highlights on hover to indicate this card is clickable */
-          /* Arrow icon highlights on hover to indicate this card is clickable */
+          /* Arrow icon highlights on hover to indicate this card is clickable */}
 
           <Link to="/student" data-testid="student-cta" className="glass rounded-3xl p-8 border border-violet/20 hover:border-violet transition-all group">
             <div className="flex items-center justify-between gap-4">
