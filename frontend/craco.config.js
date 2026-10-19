@@ -1,9 +1,9 @@
+```javascript
 // craco.config.js
 const path = require("path");
 require("dotenv").config();
 
-// Check if we're in development/preview mode (not production build)
-// Craco sets NODE_ENV=development for start, NODE_ENV=production for build
+// Check whether we are running in development mode
 const isDevServer = process.env.NODE_ENV !== "production";
 
 // Environment variable overrides
@@ -11,7 +11,7 @@ const config = {
   enableHealthCheck: process.env.ENABLE_HEALTH_CHECK === "true",
 };
 
-// Conditionally load health check modules only if enabled
+// Load health-check modules only when enabled
 let WebpackHealthPlugin;
 let setupHealthEndpoints;
 let healthPluginInstance;
@@ -22,7 +22,7 @@ if (config.enableHealthCheck) {
   healthPluginInstance = new WebpackHealthPlugin();
 }
 
-let webpackConfig = {
+const webpackConfig = {
   jest: {
     configure: {
       moduleNameMapper: {
@@ -30,6 +30,7 @@ let webpackConfig = {
       },
     },
   },
+
   eslint: {
     configure: {
       extends: ["plugin:react-hooks/recommended"],
@@ -39,54 +40,58 @@ let webpackConfig = {
       },
     },
   },
+
   webpack: {
     alias: {
-      '@': path.resolve(__dirname, 'src'),
+      "@": path.resolve(__dirname, "src"),
     },
-    configure: (webpackConfig) => {
 
-      // Add ignored patterns to reduce watched directories
-        webpackConfig.watchOptions = {
-          ...webpackConfig.watchOptions,
-          ignored: [
-            '**/node_modules/**',
-            '**/.git/**',
-            '**/build/**',
-            '**/dist/**',
-            '**/coverage/**',
-            '**/public/**',
+    configure: (webpackConfig) => {
+      // Reduce unnecessary file watching
+      webpackConfig.watchOptions = {
+        ...webpackConfig.watchOptions,
+        ignored: [
+          "**/node_modules/**",
+          "**/.git/**",
+          "**/build/**",
+          "**/dist/**",
+          "**/coverage/**",
+          "**/public/**",
         ],
       };
 
-      // face-api.js references Node's fs for its Node build; it is never used
-      // in the browser bundle, so resolve it to an empty module.
+      // Prevent browser bundling of Node.js fs
+      // face-api.js does not need this module in the browser
       webpackConfig.resolve = webpackConfig.resolve || {};
       webpackConfig.resolve.fallback = {
         ...(webpackConfig.resolve.fallback || {}),
         fs: false,
       };
 
-      // Add health check plugin to webpack if enabled
+      // Add the health-check plugin only when enabled
       if (config.enableHealthCheck && healthPluginInstance) {
         webpackConfig.plugins.push(healthPluginInstance);
       }
+
       return webpackConfig;
     },
   },
 };
 
 webpackConfig.devServer = (devServerConfig) => {
-  // Add health check endpoints if enabled
-  if (config.enableHealthCheck && setupHealthEndpoints && healthPluginInstance) {
+  // Register health-check endpoints only when enabled
+  if (
+    config.enableHealthCheck &&
+    setupHealthEndpoints &&
+    healthPluginInstance
+  ) {
     const originalSetupMiddlewares = devServerConfig.setupMiddlewares;
 
     devServerConfig.setupMiddlewares = (middlewares, devServer) => {
-      // Call original setup if exists
       if (originalSetupMiddlewares) {
         middlewares = originalSetupMiddlewares(middlewares, devServer);
       }
 
-      // Setup health endpoints
       setupHealthEndpoints(devServer, healthPluginInstance);
 
       return middlewares;
@@ -97,3 +102,4 @@ webpackConfig.devServer = (devServerConfig) => {
 };
 
 module.exports = webpackConfig;
+```

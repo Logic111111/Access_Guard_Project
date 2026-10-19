@@ -5,16 +5,6 @@ retrieves relevant semantic context for student answers, and performs RAG-contex
 Supports OpenAI, Anthropic, Gemini, and Emergent LLM API Keys.
 """
 
-import os
-import math
-import re
-import json
-import uuid
-import asyncio
-import logging
-from typing import List, Dict, Any, Optional, Tuple
-import httpx
-
 log = logging.getLogger("accessguard.rag")
 
 
