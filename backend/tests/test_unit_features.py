@@ -14,22 +14,31 @@ from server import (
 
 client = TestClient(app)
 
+# --- fallback_semantic_score: non-LLM scoring used when no grading API key is configured ---
+
 def test_fallback_semantic_score_exact_match():
+    # Identical student and model answers should score full marks
     score, feedback = fallback_semantic_score("Photosynthesis converts light into chemical energy", "Photosynthesis converts light into chemical energy")
     assert score == 10.0
     assert "Exact match" in feedback
 
 def test_fallback_semantic_score_partial_match():
+    # A close but not identical answer should score somewhere in the middle range
     score, feedback = fallback_semantic_score("Photosynthesis converts light into energy", "Photosynthesis converts sunlight into chemical energy")
     assert 5.0 <= score <= 10.0
     assert "Automated evaluation score" in feedback
 
 def test_fallback_semantic_score_empty():
+    # An empty student response should score zero with a clear reason
     score, feedback = fallback_semantic_score("", "Model answer")
     assert score == 0.0
     assert "No response provided" in feedback
 
+# --- build_grading_items: flattens per-candidate answers into gradable items ---
+
 def test_build_grading_items_creates_one_item_per_answer_per_question():
+    # Two candidates each answering one question should produce two grading items,
+    # each tagged with its originating candidate/question/marks via index_map
     answers = [
         {"candidate_id": "c1", "answers": {"q1": "student answer 1"}},
         {"candidate_id": "c2", "answers": {"q1": "student answer 2"}},
@@ -50,6 +59,8 @@ def test_build_grading_items_creates_one_item_per_answer_per_question():
 
 
 def test_build_grading_items_defaults_missing_student_answer_and_marks():
+    # A candidate with no recorded answer should default to an empty string,
+    # and a question missing from marks_map should default to 10.0 marks
     answers = [{"candidate_id": "c1", "answers": {}}]
     items, index_map = build_grading_items(answers, {"q1": "model"}, {}, {}, {})
     assert items[0]["student_answer"] == ""
@@ -57,7 +68,11 @@ def test_build_grading_items_defaults_missing_student_answer_and_marks():
     assert index_map[0] == ("c1", "q1", 10.0)
 
 
+# --- assemble_grade_docs: aggregates per-question scores into per-candidate totals ---
+
 def test_assemble_grade_docs_groups_by_candidate_and_sums_scores():
+    # Scores from multiple questions should be summed per candidate, with
+    # max_total reflecting the sum of max marks across that candidate's questions
     index_map = [("c1", "q1", 5.0), ("c1", "q2", 5.0), ("c2", "q1", 5.0)]
     results = [
         {"score": 4.0, "method": "mcq_exact"},
@@ -74,7 +89,10 @@ def test_assemble_grade_docs_groups_by_candidate_and_sums_scores():
     assert all(d["rag_graded"] is True for d in docs)
 
 
+# --- grading_config_warnings: warns when running in production without any LLM grading key configured ---
+
 def test_grading_config_warnings_empty_outside_production(monkeypatch):
+    # No warnings expected outside production, even with all keys unset
     monkeypatch.setattr(server, "IS_PRODUCTION", False)
     monkeypatch.setattr(server, "EMERGENT_LLM_KEY", "")
     monkeypatch.setattr(server, "ANTHROPIC_API_KEY", "")
@@ -84,6 +102,8 @@ def test_grading_config_warnings_empty_outside_production(monkeypatch):
 
 
 def test_grading_config_warnings_flags_missing_keys_in_production(monkeypatch):
+    # In production, having no grading API key configured at all should raise
+    # exactly one warning mentioning the fallback scoring path
     monkeypatch.setattr(server, "IS_PRODUCTION", True)
     monkeypatch.setattr(server, "EMERGENT_LLM_KEY", "")
     monkeypatch.setattr(server, "ANTHROPIC_API_KEY", "")
@@ -95,6 +115,7 @@ def test_grading_config_warnings_flags_missing_keys_in_production(monkeypatch):
 
 
 def test_grading_config_warnings_silent_when_any_key_present_in_production(monkeypatch):
+    # Having at least one valid key configured (here, Anthropic) should silence the warning
     monkeypatch.setattr(server, "IS_PRODUCTION", True)
     monkeypatch.setattr(server, "EMERGENT_LLM_KEY", "")
     monkeypatch.setattr(server, "ANTHROPIC_API_KEY", "sk-test")
@@ -103,13 +124,18 @@ def test_grading_config_warnings_silent_when_any_key_present_in_production(monke
     assert grading_config_warnings() == []
 
 
+# --- resolve_admin_password: decides the active admin password, generating one if unset ---
+
 def test_resolve_admin_password_uses_configured_value():
+    # If an admin password is explicitly configured, it should be used as-is
     password, generated = resolve_admin_password("MyConfiguredSecret1!")
     assert password == "MyConfiguredSecret1!"
     assert generated is False
 
 
 def test_resolve_admin_password_generates_when_unconfigured():
+    # If no password is configured, a strong random one should be generated instead
+    # of falling back to an insecure default like "password"
     password, generated = resolve_admin_password("")
     assert generated is True
     assert password != "password"
@@ -117,12 +143,17 @@ def test_resolve_admin_password_generates_when_unconfigured():
 
 
 def test_resolve_admin_password_generated_values_are_not_repeated():
+    # Each generated password should be unique, not a fixed/predictable value
     password_a, _ = resolve_admin_password("")
     password_b, _ = resolve_admin_password("")
     assert password_a != password_b
 
 
+# --- production_config_errors: hard validation errors that should block an insecure production boot ---
+
 def test_production_config_errors_rejects_empty_admin_password(monkeypatch):
+    # Running in production with other settings valid but an empty ADMIN_PASSWORD
+    # should be flagged as a configuration error
     monkeypatch.setattr(server, "IS_PRODUCTION", True)
     monkeypatch.setattr(server, "JWT_SECRET", "x" * 40)
     monkeypatch.setattr(server, "ADMIN_PASSWORD", "")
@@ -131,6 +162,8 @@ def test_production_config_errors_rejects_empty_admin_password(monkeypatch):
     errors = production_config_errors()
     assert any("ADMIN_PASSWORD" in e for e in errors)
 
+
+# --- Login endpoint: password-based login without 2FA ---
 
 def test_login_endpoint_without_2fa(live_client):
     # Uses the explicit, dev-only /api/test/seed invigilator rather than a credential
