@@ -13,7 +13,8 @@ const IS_DEV_BUILD = process.env.NODE_ENV !== "production";
 const DEV_DEFAULTS = IS_DEV_BUILD
   ? { invId: "INV0001", password: "", remoteToken: "" }
   : { invId: "", password: "", remoteToken: "" };
-
+// Invigilator login page. Supports two auth methods: password-based login
+// and remote token login (for accessing the app over a tunnel/remote connection).
 export default function Login() {
   const nav = useNavigate();
   const location = useLocation();
@@ -27,6 +28,7 @@ export default function Login() {
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
+    
     const queryInvId = params.get("inv_id") || params.get("invId") || params.get("invigilator");
     const queryMethod = params.get("login_method") || params.get("method");
 
@@ -38,7 +40,7 @@ export default function Login() {
     if (queryPassword) setPw(queryPassword);
     if (queryRemoteToken) setRemoteToken(queryRemoteToken);
   }, [location.search]);
-
+// Shows a toast if the user was redirected here due to an expired session.
   useEffect(() => {
     if (sessionStorage.getItem("ag_session_expired")) {
       sessionStorage.removeItem("ag_session_expired");
