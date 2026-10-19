@@ -812,3 +812,7 @@ function QuestionCard({ question, index, value, onChange }) {
     </div>
   );
 }
+// Secrets passed in the URL are development conveniences only; production
+// builds never pre-fill them. No password is pre-filled even in dev: there is
+// no fixed invigilator credential in this codebase anymore (see backend's
+// resolve_admin_password / POST /api/test/seed) to safely hardcode here.
