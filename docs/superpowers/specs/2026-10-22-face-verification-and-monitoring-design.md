@@ -223,16 +223,20 @@ Allowed flags: `camera_unavailable`, `liveness_failed`, `multiple_faces`,
 `models_unavailable`, `name_unconfirmed`. `name_unconfirmed` is
 informational; every other flag requires review.
 
-- New pure function `assess_verification(liveness_passed, face_match_score,
-  flags) -> "verified" | "needs_review"`: `verified` only when liveness
-  passed, the score is present and `≥ 0.5`, and no review-requiring flag is
-  set. The candidate document stores `verification_status`,
+- New pure function `assess_verification(required, liveness_passed,
+  face_match_score, flags) -> "not_required" | "verified" | "needs_review"`:
+  `not_required` when the session has `require_identity_verification: false`
+  (quick sessions and module quizzes join without the verification page);
+  otherwise `verified` only when liveness passed, the score is present and
+  `≥ 0.5`, and no review-requiring flag is set. The candidate document stores `verification_status`,
   `verification_flags` and `liveness_frame_urls` (stored like the other
   images).
 - Size limits (HTTP 413 with a clear message): each ID image and the selfie
   ≤ 2 MB as a data URL; each liveness frame ≤ 100 KB.
 - `GET /sessions/{sid}/candidates` additionally excludes
   `liveness_frame_urls` (the list is polled; images are fetched on demand).
+  The `candidate_joined` WebSocket broadcast drops the ID images and
+  liveness frames for the same reason.
 - New `GET /sessions/{sid}/candidates/{cid}/evidence` (session owner only):
   ID front/back, selfie, liveness frames, `liveness_passed`,
   `face_match_score`, `verification_status`, `verification_flags`, and the
@@ -245,7 +249,8 @@ informational; every other flag requires review.
 
 - Pending cards: **Verified** (green) or **Needs review** (amber) badge with
   short reasons from the flags; match shown as a percentage, or
-  "Unverified" when there is no score.
+  "Unverified" when there is no score. `not_required` candidates show no
+  badge and no match figure.
 - New `frontend/src/components/CandidateEvidencePanel.jsx` (side sheet using
   the existing `components/ui` primitives): ID front/back, selfie, liveness
   frames, check results, violations timeline, and Approve / Reject buttons
