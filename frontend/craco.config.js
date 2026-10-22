@@ -1,4 +1,3 @@
-```javascript
 // craco.config.js
 const path = require("path");
 require("dotenv").config();
@@ -102,4 +101,3 @@ webpackConfig.devServer = (devServerConfig) => {
 };
 
 module.exports = webpackConfig;
-```

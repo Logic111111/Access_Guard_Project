@@ -57,14 +57,6 @@ const IS_DEV_BUILD = process.env.NODE_ENV !== "production";
 // so repeated confirmed exits from fullscreen/focus escalate to a real
 // server-side lock — the same "locked" state the extension's prohibited_url
 // report triggers — instead of only logging an event forever.
-// Secrets passed in the URL are development conveniences only; production
-// builds never pre-fill them. No password is pre-filled even in dev: there is
-// no fixed invigilator credential in this codebase anymore (see backend's
-// resolve_admin_password / POST /api/test/seed) to safely hardcode here.
-// Secrets passed in the URL are development conveniences only; production
-// builds never pre-fill them. No password is pre-filled even in dev: there is
-// no fixed invigilator credential in this codebase anymore (see backend's
-// resolve_admin_password / POST /api/test/seed) to safely hardcode here.
 const BROWSER_LOCKDOWN_BREACH_LIMIT = 3;
 
 function requestKeyboardLock() {
@@ -820,7 +812,3 @@ function QuestionCard({ question, index, value, onChange }) {
     </div>
   );
 }
-// Secrets passed in the URL are development conveniences only; production
-// builds never pre-fill them. No password is pre-filled even in dev: there is
-// no fixed invigilator credential in this codebase anymore (see backend's
-// resolve_admin_password / POST /api/test/seed) to safely hardcode here.
